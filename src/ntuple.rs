@@ -109,6 +109,10 @@ pub struct NetConfig {
     pub pos_2x3: bool,
     /// 5-cell diagonal staircase tuples (the 2048 papers' snake shapes).
     pub staircase: bool,
+    /// The 10 wraparound diagonals (5 per direction, 3 orbit reps): not
+    /// chains, but they capture diagonal value arrangement and partition the
+    /// board into fixed 5-cell sets.
+    pub diagonals: bool,
 }
 
 impl NetConfig {
@@ -118,6 +122,7 @@ impl NetConfig {
             with_2x3: true,
             pos_2x3: false,
             staircase: false,
+            diagonals: false,
         }
     }
 }
@@ -168,7 +173,8 @@ fn dihedral(r: usize, c: usize, t: usize) -> (usize, usize) {
     (r, c)
 }
 
-const SAVE_MAGIC: u32 = 0x4E54_5632; // "NTV2"
+const SAVE_MAGIC_V2: u32 = 0x4E54_5632; // "NTV2"
+const SAVE_MAGIC: u32 = 0x4E54_5633; // "NTV3": adds the diagonals flag
 
 pub struct NTupleNet {
     tables: Vec<Lut>,
@@ -214,6 +220,16 @@ impl NTupleNet {
             let cells = [(r, c), (r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)];
             tables.push(Lut::new(len5));
             add_base(&mut images, &cells, tables.len() - 1);
+        }
+        // wraparound diagonals D_k = {(r, (r+k) mod 5)}: orbit reps k=0,1,2
+        // (reflections/transposes cover the other offsets and the whole
+        // anti-diagonal family)
+        if cfg.diagonals {
+            for k in 0..3 {
+                let cells: Vec<_> = (0..N).map(|r| (r, (r + k) % N)).collect();
+                tables.push(Lut::new(len5));
+                add_base(&mut images, &cells, tables.len() - 1);
+            }
         }
         // 5-cell diagonal staircases, anchor orbit reps (positional)
         if cfg.staircase {
@@ -353,6 +369,7 @@ impl NTupleNet {
         wr.write_all(&u32::from(self.cfg.with_2x3).to_le_bytes())?;
         wr.write_all(&u32::from(self.cfg.pos_2x3).to_le_bytes())?;
         wr.write_all(&u32::from(self.cfg.staircase).to_le_bytes())?;
+        wr.write_all(&u32::from(self.cfg.diagonals).to_le_bytes())?;
         wr.write_all(&(self.tables.len() as u32).to_le_bytes())?;
         for t in &self.tables {
             wr.write_all(&(t.w.len() as u64).to_le_bytes())?;
@@ -371,7 +388,7 @@ impl NTupleNet {
         let mut b8 = [0u8; 8];
         rd.read_exact(&mut b4)?;
         let first = u32::from_le_bytes(b4);
-        let (cfg, ntab) = if first == SAVE_MAGIC {
+        let (cfg, ntab) = if first == SAVE_MAGIC || first == SAVE_MAGIC_V2 {
             let mut word = || -> std::io::Result<u32> {
                 rd.read_exact(&mut b4)?;
                 Ok(u32::from_le_bytes(b4))
@@ -384,6 +401,11 @@ impl NTupleNet {
             let with_2x3 = word()? != 0;
             let pos_2x3 = word()? != 0;
             let staircase = word()? != 0;
+            let diagonals = if first == SAVE_MAGIC_V2 {
+                false
+            } else {
+                word()? != 0
+            };
             let ntab = word()? as usize;
             (
                 NetConfig {
@@ -391,6 +413,7 @@ impl NTupleNet {
                     with_2x3,
                     pos_2x3,
                     staircase,
+                    diagonals,
                 },
                 ntab,
             )
@@ -616,6 +639,7 @@ mod tests {
         // a board and its transpose must have identical value
         let mut cfg = small_cfg();
         cfg.staircase = true;
+        cfg.diagonals = true;
         let mut net = NTupleNet::new(1.0, cfg);
         let b = Board::new_game(3);
         let codes = net.encode(&b.cells);

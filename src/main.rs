@@ -69,6 +69,7 @@ fn cmd_ntuple(args: &[String]) {
         with_2x3: !args.iter().any(|a| a == "--no-2x3"),
         pos_2x3: args.iter().any(|a| a == "--pos-2x3"),
         staircase: args.iter().any(|a| a == "--staircase"),
+        diagonals: args.iter().any(|a| a == "--diagonals"),
     };
     let mut net = match arg_val(args, "--load") {
         Some(p) => NTupleNet::load(&p, alpha).expect("load net"),
