@@ -6,7 +6,7 @@
 //! tables learn the expectation over refills implicitly, so training never
 //! enumerates the 3^(k-1) refill outcomes.
 
-use crate::game::{idx, Board, Move, Mulberry32, CELLS, MOVE_CAP, N};
+use crate::game::{idx, rc, Board, Move, Mulberry32, CELLS, MOVE_CAP, N};
 
 /// Base cell alphabet: 0..=3 exact 1/2/3/4, 4..=18 ladder tiers 6*2^0..6*2^14
 /// (saturating), 19 pow2 >=8, 20 nine-family 9*2^k, 21 other trash,
@@ -113,6 +113,10 @@ pub struct NetConfig {
     /// chains, but they capture diagonal value arrangement and partition the
     /// board into fixed 5-cell sets.
     pub diagonals: bool,
+    /// Global long-range interaction tables that ordinary tuples cannot see:
+    /// (a) symmetry-canonical positions of the two largest tiles (625
+    /// entries), (b) big-tile dispersion bucket x max-tile tier (160).
+    pub global: bool,
 }
 
 impl NetConfig {
@@ -123,6 +127,7 @@ impl NetConfig {
             pos_2x3: false,
             staircase: false,
             diagonals: false,
+            global: false,
         }
     }
 }
@@ -174,7 +179,35 @@ fn dihedral(r: usize, c: usize, t: usize) -> (usize, usize) {
 }
 
 const SAVE_MAGIC_V2: u32 = 0x4E54_5632; // "NTV2"
-const SAVE_MAGIC: u32 = 0x4E54_5633; // "NTV3": adds the diagonals flag
+const SAVE_MAGIC_V3: u32 = 0x4E54_5633; // "NTV3": adds the diagonals flag
+const SAVE_MAGIC: u32 = 0x4E54_5634; // "NTV4": adds the global flag
+
+/// Approximate magnitude of a cell code, for ranking "largest tiles" in the
+/// global features. Exact on spawns and the ladder (which dominates big
+/// tiles); bucketed families get representative values. Pending refills
+/// rank lowest.
+fn code_mag(c: u8, a: Alphabet) -> u32 {
+    let pow2_rep = |c: u8, base: u8| 8u32 << (c - base); // 8,16,32,64,128
+    match a {
+        Alphabet::Base => match c {
+            0..=3 => c as u32 + 1,
+            4..=18 => 6u32 << (c - 4),
+            19 => 16,
+            20 => 36,
+            21 => 30,
+            _ => 0,
+        },
+        Alphabet::Fine => match c {
+            0..=3 => c as u32 + 1,
+            4..=18 => 6u32 << (c - 4),
+            19..=23 => pow2_rep(c, 19),
+            24..=27 => 9u32 << (c - 24),
+            28 => 10,
+            29 => 40,
+            _ => 0,
+        },
+    }
+}
 
 pub struct NTupleNet {
     tables: Vec<Lut>,
@@ -182,6 +215,10 @@ pub struct NTupleNet {
     pub alpha: f32,
     pub cfg: NetConfig,
     m: usize,
+    /// Number of trailing tables that are global features, not tuple images.
+    n_globals: usize,
+    /// Dihedral index permutations: perms[t][i] = image of cell i.
+    perms: Vec<[u8; CELLS]>,
 }
 
 impl NTupleNet {
@@ -273,12 +310,32 @@ impl NTupleNet {
                 add_base(&mut images, &cells, table);
             }
         }
+        let mut n_globals = 0;
+        if cfg.global {
+            tables.push(Lut::new(CELLS * CELLS)); // top-2 positions, canonical
+            tables.push(Lut::new(20 * 8)); // dispersion bucket x max tier
+            n_globals = 2;
+        }
+        let perms: Vec<[u8; CELLS]> = (0..8)
+            .map(|t| {
+                let mut p = [0u8; CELLS];
+                for r in 0..N {
+                    for c in 0..N {
+                        let (rr, cc) = dihedral(r, c, t);
+                        p[idx(r, c)] = idx(rr, cc) as u8;
+                    }
+                }
+                p
+            })
+            .collect();
         NTupleNet {
             tables,
             images,
             alpha,
             cfg,
             m,
+            n_globals,
+            perms,
         }
     }
 
@@ -288,6 +345,51 @@ impl NTupleNet {
             i = i * self.m + codes[c as usize] as usize;
         }
         i
+    }
+
+    /// Indices into the two global tables for this board encoding. Both are
+    /// exactly dihedral-invariant: the top-2 pair is selected per transform
+    /// (so tie-breaks agree), and dispersion sums over all big tiles.
+    fn global_indices(&self, codes: &[u8; CELLS]) -> [usize; 2] {
+        let a = self.cfg.alphabet;
+        let mags: Vec<u32> = codes.iter().map(|&c| code_mag(c, a)).collect();
+        // canonical ordered top-2 pair: run the same index-order tie-break on
+        // every transformed board, take the minimal encoding
+        let mut g1 = usize::MAX;
+        for p in &self.perms {
+            let mut inv = [0usize; CELLS];
+            for (i, &pi) in p.iter().enumerate() {
+                inv[pi as usize] = i;
+            }
+            let (mut p1, mut p2, mut m1, mut m2) = (0usize, 0usize, 0u32, 0u32);
+            for (j, &src) in inv.iter().enumerate() {
+                let mg = mags[src];
+                if mg > m1 {
+                    p2 = p1;
+                    m2 = m1;
+                    p1 = j;
+                    m1 = mg;
+                } else if mg > m2 {
+                    p2 = j;
+                    m2 = mg;
+                }
+            }
+            g1 = g1.min(p1 * CELLS + p2);
+        }
+        // dispersion: pairwise Manhattan distance over ALL tiles >= 48
+        let big: Vec<usize> = (0..CELLS).filter(|&i| mags[i] >= 48).collect();
+        let mut disp = 0usize;
+        for i in 0..big.len() {
+            for j in i + 1..big.len() {
+                let (r1, c1) = rc(big[i]);
+                let (r2, c2) = rc(big[j]);
+                disp += r1.abs_diff(r2) + c1.abs_diff(c2);
+            }
+        }
+        let maxmag = *mags.iter().max().unwrap_or(&1);
+        let tier = (32 - (maxmag.max(3) / 3).leading_zeros()).min(7) as usize;
+        let g2 = disp.min(19) * 8 + tier;
+        [g1, g2]
     }
 
     pub fn encode(&self, cells: &[u64; CELLS]) -> [u8; CELLS] {
@@ -303,19 +405,19 @@ impl NTupleNet {
         for img in &self.images {
             v += self.tables[img.table].w[self.index(img, codes)] as f64;
         }
+        if self.n_globals > 0 {
+            let g = self.global_indices(codes);
+            let base = self.tables.len() - self.n_globals;
+            for (k, &gi) in g.iter().enumerate() {
+                v += self.tables[base + k].w[gi] as f64;
+            }
+        }
         v
     }
 
     /// TC-TD update of V(codes) toward target.
     pub fn update(&mut self, codes: &[u8; CELLS], target: f64) {
-        let delta = (target - self.value(codes)) as f32;
-        let per = self.alpha * delta / self.images.len() as f32;
-        for k in 0..self.images.len() {
-            let i = {
-                let img = &self.images[k];
-                self.index(img, codes)
-            };
-            let t = &mut self.tables[self.images[k].table];
+        fn bump(t: &mut Lut, i: usize, per: f32, delta: f32) {
             let rate = if t.a[i] > 0.0 {
                 (t.e[i].abs() / t.a[i]).min(1.0)
             } else {
@@ -324,6 +426,22 @@ impl NTupleNet {
             t.w[i] += rate * per;
             t.e[i] += delta;
             t.a[i] += delta.abs();
+        }
+        let delta = (target - self.value(codes)) as f32;
+        let per = self.alpha * delta / (self.images.len() + self.n_globals) as f32;
+        for k in 0..self.images.len() {
+            let i = {
+                let img = &self.images[k];
+                self.index(img, codes)
+            };
+            bump(&mut self.tables[self.images[k].table], i, per, delta);
+        }
+        if self.n_globals > 0 {
+            let g = self.global_indices(codes);
+            let base = self.tables.len() - self.n_globals;
+            for (k, &gi) in g.iter().enumerate() {
+                bump(&mut self.tables[base + k], gi, per, delta);
+            }
         }
     }
 
@@ -370,6 +488,7 @@ impl NTupleNet {
         wr.write_all(&u32::from(self.cfg.pos_2x3).to_le_bytes())?;
         wr.write_all(&u32::from(self.cfg.staircase).to_le_bytes())?;
         wr.write_all(&u32::from(self.cfg.diagonals).to_le_bytes())?;
+        wr.write_all(&u32::from(self.cfg.global).to_le_bytes())?;
         wr.write_all(&(self.tables.len() as u32).to_le_bytes())?;
         for t in &self.tables {
             wr.write_all(&(t.w.len() as u64).to_le_bytes())?;
@@ -388,7 +507,8 @@ impl NTupleNet {
         let mut b8 = [0u8; 8];
         rd.read_exact(&mut b4)?;
         let first = u32::from_le_bytes(b4);
-        let (cfg, ntab) = if first == SAVE_MAGIC || first == SAVE_MAGIC_V2 {
+        let (cfg, ntab) = if first == SAVE_MAGIC || first == SAVE_MAGIC_V3 || first == SAVE_MAGIC_V2
+        {
             let mut word = || -> std::io::Result<u32> {
                 rd.read_exact(&mut b4)?;
                 Ok(u32::from_le_bytes(b4))
@@ -406,6 +526,11 @@ impl NTupleNet {
             } else {
                 word()? != 0
             };
+            let global = if first == SAVE_MAGIC {
+                word()? != 0
+            } else {
+                false
+            };
             let ntab = word()? as usize;
             (
                 NetConfig {
@@ -414,6 +539,7 @@ impl NTupleNet {
                     pos_2x3,
                     staircase,
                     diagonals,
+                    global,
                 },
                 ntab,
             )
@@ -640,6 +766,7 @@ mod tests {
         let mut cfg = small_cfg();
         cfg.staircase = true;
         cfg.diagonals = true;
+        cfg.global = true;
         let mut net = NTupleNet::new(1.0, cfg);
         let b = Board::new_game(3);
         let codes = net.encode(&b.cells);
