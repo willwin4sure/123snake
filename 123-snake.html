@@ -437,7 +437,7 @@
     }
   }
   shareBtn.addEventListener('click',function(){
-    var txt='123 Snake \u2014 '+score+' points!\n'+emojiBoard()+'\nPlay: '+SHARE_URL;
+    var txt='123 Snake \u2014 '+score+' points!\n'+emojiBoard()+'\nCan you beat it? Play: '+SHARE_URL;
     if(navigator.share&&/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)){
       navigator.share({text:txt}).catch(function(){copyChain(txt);});
     }else{

@@ -8,6 +8,11 @@
 <meta name="description" content="123 Snake — drag chains of matching numbers and merge them into their sum. A recreation of the 2016 mobile puzzle Integer Snake.">
 <meta property="og:title" content="123 Snake">
 <meta property="og:description" content="Drag chains of matching numbers and merge them into their sum. How high can you score?">
+<meta property="og:url" content="https://willwin4sure.github.io/123snake/">
+<meta property="og:image" content="https://willwin4sure.github.io/123snake/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%23F6DC7D'/%3E%3Ctext x='50' y='72' font-size='62' font-weight='bold' text-anchor='middle' font-family='Arial'%3E2%3C/text%3E%3C/svg%3E">
 </head>
 <body>
@@ -449,7 +454,7 @@
     }
   }
   shareBtn.addEventListener('click',function(){
-    var txt='123 Snake \u2014 '+score+' points!\n'+emojiBoard()+'\nPlay: '+SHARE_URL;
+    var txt='123 Snake \u2014 '+score+' points!\n'+emojiBoard()+'\nCan you beat it? Play: '+SHARE_URL;
     if(navigator.share&&/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)){
       navigator.share({text:txt}).catch(function(){copyChain(txt);});
     }else{

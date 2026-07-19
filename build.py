@@ -29,6 +29,11 @@ HEAD = """<!doctype html>
 <meta name="description" content="123 Snake — drag chains of matching numbers and merge them into their sum. A recreation of the 2016 mobile puzzle Integer Snake.">
 <meta property="og:title" content="123 Snake">
 <meta property="og:description" content="Drag chains of matching numbers and merge them into their sum. How high can you score?">
+<meta property="og:url" content="https://willwin4sure.github.io/123snake/">
+<meta property="og:image" content="https://willwin4sure.github.io/123snake/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%23F6DC7D'/%3E%3Ctext x='50' y='72' font-size='62' font-weight='bold' text-anchor='middle' font-family='Arial'%3E2%3C/text%3E%3C/svg%3E">
 </head>
 <body>
@@ -71,8 +76,102 @@ def build_site() -> None:
     print(f"docs/index.html         {len(out):>8} bytes")
 
 
+def build_og_image() -> None:
+    """Render a random start board as the link-preview image (docs/og.png).
+
+    Regenerated on every build, so each deploy ships a fresh board. Requires
+    pillow; skipped with a warning if unavailable.
+    """
+    try:
+        import colorsys
+        import random
+        import time
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        print("pillow not installed - skipping og.png")
+        return
+
+    tiers = [1, 2, 3]
+    cols_hsl = {1: (112, 55, 70), 2: (48, 88, 66), 3: (27, 88, 66)}
+
+    def rgb(v):
+        h, sat, light = cols_hsl[v]
+        r, g, b = colorsys.hls_to_rgb(h / 360, light / 100, sat / 100)
+        return (int(r * 255), int(g * 255), int(b * 255))
+
+    rng = random.Random(int(time.time()))
+    while True:
+        cells = [rng.randint(1, 3) for _ in range(25)]
+        ok = any(
+            (c + 1 < 5 and cells[r * 5 + c] == cells[r * 5 + c + 1])
+            or (r + 1 < 5 and cells[r * 5 + c] == cells[(r + 1) * 5 + c])
+            for r in range(5)
+            for c in range(5)
+        )
+        if ok:
+            break
+
+    W, H = 1200, 630
+    img = Image.new("RGB", (W, H), (22, 26, 22))
+    d = ImageDraw.Draw(img)
+
+    def font(size):
+        for path in [
+            "/System/Library/Fonts/Supplemental/Arial Rounded Bold.ttf",
+            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        ]:
+            try:
+                return ImageFont.truetype(path, size)
+            except OSError:
+                continue
+        return ImageFont.load_default()
+
+    tile, gap = 92, 12
+    bs = 5 * tile + 4 * gap
+    bx, by = 80, (H - bs) // 2
+    d.rounded_rectangle(
+        [bx - 22, by - 22, bx + bs + 22, by + bs + 22],
+        radius=26,
+        fill=(35, 42, 34),
+    )
+    f_num = font(40)
+    for r in range(5):
+        for c in range(5):
+            v = cells[r * 5 + c]
+            x, y = bx + c * (tile + gap), by + r * (tile + gap)
+            d.rounded_rectangle(
+                [x, y, x + tile, y + tile], radius=20, fill=rgb(v)
+            )
+            t = str(v)
+            tw = d.textlength(t, font=f_num)
+            d.text(
+                (x + tile / 2 - tw / 2, y + tile / 2 - 26),
+                t,
+                font=f_num,
+                fill=(35, 39, 31),
+            )
+
+    tx = bx + bs + 90
+    d.text((tx, 190), "123 Snake", font=font(86), fill=(234, 239, 230))
+    d.text(
+        (tx, 310),
+        "Merge the chains.",
+        font=font(38),
+        fill=(147, 157, 141),
+    )
+    d.text(
+        (tx, 362),
+        "Climb the ladder.",
+        font=font(38),
+        fill=(147, 157, 141),
+    )
+    img.save(ROOT / "docs/og.png")
+    print(f"docs/og.png             {(ROOT / 'docs/og.png').stat().st_size:>8} bytes")
+
+
 if __name__ == "__main__":
     b64 = build_wasm()
     print(f"wasm engine             {len(b64):>8} bytes (base64)")
     build_lab(b64)
     build_site()
+    build_og_image()
