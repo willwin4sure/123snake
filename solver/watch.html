@@ -1,0 +1,141 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>123 Snake — n-tuple watch</title>
+<style>
+  :root{--bg:#161A16;--ink:#EAEFE6;--muted:#939D8D;--well:#232A22;--card:#1E241D;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:ui-rounded,"SF Pro Rounded",system-ui,-apple-system,"Segoe UI",sans-serif;
+    display:flex;flex-direction:column;align-items:center;padding:24px 12px;}
+  h1{font-size:20px;font-weight:800;margin:0 0 2px;}
+  .sub{color:var(--muted);font-size:12.5px;margin:0 0 18px;}
+  .hud{display:flex;gap:10px;margin:0 0 14px;}
+  .stat{background:var(--card);border-radius:12px;padding:8px 16px;text-align:center;min-width:86px;}
+  .stat .l{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);}
+  .stat .v{font-size:20px;font-weight:800;}
+  #board{background:var(--well);border-radius:16px;padding:10px;
+    display:grid;grid-template-columns:repeat(5,64px);gap:8px;}
+  .tile{width:64px;height:64px;border-radius:14px;display:flex;align-items:center;
+    justify-content:center;font-weight:700;color:#23271F;font-size:19px;
+    position:relative;transition:outline-color .12s;outline:3px solid transparent;}
+  .tile.d4{font-size:14px}.tile.d5{font-size:11.5px}
+  .tile.sel{outline-color:#EAEFE6;}
+  .tile.head{outline-color:#FFD54D;}
+  .tile .ord{position:absolute;top:2px;right:5px;font-size:9.5px;font-weight:700;opacity:.65;}
+  .row{display:flex;gap:10px;margin:16px 0 0;align-items:center;flex-wrap:wrap;justify-content:center;}
+  button{background:var(--card);color:var(--ink);border:1px solid #394336;border-radius:10px;
+    padding:9px 16px;font:inherit;font-weight:700;font-size:14px;cursor:pointer;}
+  button:active{transform:scale(.97)}
+  label{font-size:12px;color:var(--muted);}
+  input[type=range]{width:120px}
+  .foot{color:var(--muted);font-size:11px;margin-top:18px;}
+</style>
+<h1>n-tuple bot</h1>
+<p class="sub" id="model">loading model info…</p>
+<div class="hud">
+  <div class="stat"><div class="l">score</div><div class="v" id="score">0</div></div>
+  <div class="stat"><div class="l">moves</div><div class="v" id="moves">0</div></div>
+  <div class="stat"><div class="l">V (pred. left)</div><div class="v" id="vpred">–</div></div>
+</div>
+<div id="board"></div>
+<div class="row">
+  <button id="new">New game</button>
+  <button id="step">Step</button>
+  <button id="play">Play</button>
+  <label>speed <input type="range" id="speed" min="60" max="900" value="350"></label>
+</div>
+<p class="foot" id="status"></p>
+<script>
+(function(){
+  var TIERS=[1,2,3,4,5,6,7,8,9,10,12,16,20,24,32,40,48,64,96,128,192,256,384,512,768,1024,1536,2048];
+  var COLS=['hsl(112,55%,70%)','hsl(48,88%,66%)','hsl(27,88%,66%)','hsl(266,72%,78%)',
+    'hsl(165,55%,66%)','hsl(84,60%,64%)','hsl(190,62%,70%)','hsl(322,75%,77%)',
+    'hsl(5,80%,76%)','hsl(230,70%,79%)','hsl(150,50%,64%)','hsl(38,90%,64%)',
+    'hsl(288,55%,76%)','hsl(70,65%,60%)','hsl(348,75%,75%)','hsl(174,55%,60%)',
+    'hsl(214,80%,72%)','hsl(24,75%,63%)','hsl(300,60%,74%)','hsl(130,55%,62%)',
+    'hsl(54,85%,58%)','hsl(262,65%,72%)','hsl(200,70%,64%)','hsl(336,70%,70%)',
+    'hsl(90,50%,58%)','hsl(44,90%,58%)','hsl(280,60%,68%)','hsl(10,70%,64%)'];
+  function colorFor(v){
+    var i=0,k;
+    for(k=0;k<TIERS.length;k++) if(v>=TIERS[k]) i=k;
+    if(v>4096){
+      var wrap=Math.floor(Math.log(v/2048)/Math.LN2);
+      i=(TIERS.length-1+wrap)%COLS.length;
+      var m=COLS[i].match(/hsl\((\d+),(\d+)%,(\d+)%\)/);
+      return 'hsl('+m[1]+','+Math.min(96,+m[2]+10+4*wrap)+'%,'+Math.max(36,+m[3]-8-4*wrap)+'%)';
+    }
+    return COLS[i];
+  }
+  var board=document.getElementById('board');
+  var els=[];
+  for(var i=0;i<25;i++){
+    var d=document.createElement('div');
+    d.className='tile';
+    board.appendChild(d);
+    els.push(d);
+  }
+  function render(cells){
+    for(var i=0;i<25;i++){
+      var v=cells[i];
+      var e=els[i];
+      e.textContent=v;
+      e.className='tile'+(String(v).length>4?' d5':String(v).length>3?' d4':'');
+      e.style.background=colorFor(v);
+      e.style.color=v>4096?'#F6F8F3':'#23271F';
+    }
+  }
+  var playing=false,over=false;
+  function setStat(s,m,v){
+    document.getElementById('score').textContent=s;
+    document.getElementById('moves').textContent=m;
+    document.getElementById('vpred').textContent=v==null?'–':Math.round(v);
+  }
+  function api(p){return fetch(p).then(function(r){return r.json()})}
+  function newGame(){
+    playing=false;document.getElementById('play').textContent='Play';
+    api('/new?seed='+((Math.random()*4294967296)>>>0)).then(function(st){
+      over=false;render(st.cells);setStat(st.score,st.moves,st.v);
+      document.getElementById('status').textContent='';
+    });
+  }
+  function step(){
+    if(over)return Promise.resolve(false);
+    return api('/step').then(function(r){
+      if(r.done){over=true;document.getElementById('status').textContent='game over';return false;}
+      r.path.forEach(function(c,k){
+        els[c].classList.add(k===r.path.length-1?'head':'sel');
+        var o=document.createElement('span');o.className='ord';o.textContent=k+1;
+        els[c].appendChild(o);
+      });
+      var wait=Math.max(60,+document.getElementById('speed').max - +document.getElementById('speed').value);
+      return new Promise(function(res){
+        setTimeout(function(){
+          render(r.cells);setStat(r.score,r.moves,r.v);
+          if(r.over){over=true;document.getElementById('status').textContent='game over — final '+r.score;}
+          res(!r.over);
+        },wait);
+      });
+    });
+  }
+  function loop(){
+    if(!playing)return;
+    step().then(function(go){
+      if(go&&playing)setTimeout(loop,40);
+      else{playing=false;document.getElementById('play').textContent='Play';}
+    });
+  }
+  document.getElementById('new').onclick=newGame;
+  document.getElementById('step').onclick=function(){if(!playing)step()};
+  document.getElementById('play').onclick=function(){
+    playing=!playing;
+    this.textContent=playing?'Pause':'Play';
+    if(playing)loop();
+  };
+  api('/info').then(function(m){
+    document.getElementById('model').textContent=
+      m.model+' — '+m.params.toLocaleString()+' params, watching greedy play';
+  });
+  newGame();
+})();
+</script>

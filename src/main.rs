@@ -25,12 +25,107 @@ fn main() {
         "calibrate" => cmd_calibrate(&args),
         "dump" => cmd_dump(&args),
         "ntuple" => cmd_ntuple(&args),
+        "serve" => cmd_serve(&args),
         other => {
             eprintln!(
                 "unknown command '{other}' (expected: eval, play, tune, calibrate, dump, ntuple)"
             );
             std::process::exit(2);
         }
+    }
+}
+
+/// Local watch server: loads an n-tuple checkpoint and serves a page where
+/// the bot plays visibly. Weights never leave the machine.
+///
+///   snake serve [--model ml/ntuple-v1.bin] [--port 8271]
+fn cmd_serve(args: &[String]) {
+    use integer_snake::ntuple::NTupleNet;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+
+    let model = arg_val(args, "--model").unwrap_or_else(|| "ml/ntuple-v1.bin".to_string());
+    let port: u16 = arg_val(args, "--port")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(8271);
+    eprintln!("loading {model} ...");
+    let net = NTupleNet::load(&model, 1.0).expect("load model");
+    eprintln!("{} params; http://127.0.0.1:{port}/", net.params());
+
+    let html = include_str!("../solver/watch.html");
+    let mut game: Option<Board> = None;
+    let listener = TcpListener::bind(("127.0.0.1", port)).expect("bind");
+
+    fn state_json(b: &Board, v: Option<f64>) -> String {
+        let cells: Vec<String> = b.cells.iter().map(|c| c.to_string()).collect();
+        format!(
+            "{{\"cells\":[{}],\"score\":{},\"moves\":{},\"over\":{},\"v\":{}}}",
+            cells.join(","),
+            b.score,
+            b.moves_made,
+            u8::from(!b.has_moves()),
+            v.map_or("null".to_string(), |x| format!("{x:.1}"))
+        )
+    }
+
+    for stream in listener.incoming() {
+        let Ok(mut stream) = stream else { continue };
+        let mut line = String::new();
+        if BufReader::new(&stream).read_line(&mut line).is_err() {
+            continue;
+        }
+        let path = line.split_whitespace().nth(1).unwrap_or("/").to_string();
+        let (route, query) = match path.split_once('?') {
+            Some((r, q)) => (r, q),
+            None => (path.as_str(), ""),
+        };
+        let (ctype, body) = match route {
+            "/" => ("text/html; charset=utf-8", html.to_string()),
+            "/info" => (
+                "application/json",
+                format!(
+                    "{{\"model\":\"{}\",\"params\":{}}}",
+                    model.replace('"', ""),
+                    net.params()
+                ),
+            ),
+            "/new" => {
+                let seed: u32 = query
+                    .strip_prefix("seed=")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(1);
+                let b = Board::new_game(seed);
+                let v = net.greedy(&b).map(|(_, r, a)| r + net.value(&a));
+                let json = state_json(&b, v);
+                game = Some(b);
+                ("application/json", json)
+            }
+            "/step" => match &mut game {
+                Some(b) if b.has_moves() => {
+                    let (mv, _, _) = net.greedy(b).expect("moves exist");
+                    let path_cells: Vec<String> =
+                        mv.path.iter().map(|c| c.to_string()).collect();
+                    b.apply(&mv);
+                    let v = net.greedy(b).map(|(_, r, a)| r + net.value(&a));
+                    let st = state_json(b, v);
+                    (
+                        "application/json",
+                        format!(
+                            "{{\"path\":[{}],{}",
+                            path_cells.join(","),
+                            st.trim_start_matches('{')
+                        ),
+                    )
+                }
+                _ => ("application/json", "{\"done\":true}".to_string()),
+            },
+            _ => ("text/plain", "not found".to_string()),
+        };
+        let _ = write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
     }
 }
 
