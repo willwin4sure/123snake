@@ -60,19 +60,28 @@ fn cmd_ntuple(args: &[String]) {
         .and_then(|v| v.parse().ok())
         .unwrap_or(500_000);
     let save = arg_val(args, "--save");
-    let with_2x3 = !args.iter().any(|a| a == "--no-2x3");
+    let cfg = integer_snake::ntuple::NetConfig {
+        alphabet: if arg_val(args, "--alphabet").as_deref() == Some("fine") {
+            integer_snake::ntuple::Alphabet::Fine
+        } else {
+            integer_snake::ntuple::Alphabet::Base
+        },
+        with_2x3: !args.iter().any(|a| a == "--no-2x3"),
+        pos_2x3: args.iter().any(|a| a == "--pos-2x3"),
+        staircase: args.iter().any(|a| a == "--staircase"),
+    };
     let mut net = match arg_val(args, "--load") {
         Some(p) => NTupleNet::load(&p, alpha).expect("load net"),
-        None => NTupleNet::new(alpha, with_2x3),
+        None => NTupleNet::new(alpha, cfg),
     };
     eprintln!(
-        "ntuple: {} games, {} images over {} tables, {} params, alpha {}, 2x3 {}",
+        "ntuple: {} games, {} images over {} tables, {} params, alpha {}, cfg {:?}",
         games,
         net.n_images(),
         net.n_tables(),
         net.params(),
         alpha,
-        net.with_2x3
+        net.cfg
     );
     if games == 0 {
         // eval-only: percentiles over the eval block; --exp topk:samples
