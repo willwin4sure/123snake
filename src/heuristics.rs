@@ -36,11 +36,11 @@ pub fn classify(v: u64) -> TileClass {
         return TileClass::Small;
     }
     let mut m = v;
-    while m % 2 == 0 {
+    while m.is_multiple_of(2) {
         m /= 2;
     }
     let mut threes = 0;
-    while m % 3 == 0 {
+    while m.is_multiple_of(3) {
         m /= 3;
         threes += 1;
     }
