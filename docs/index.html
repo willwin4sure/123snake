@@ -148,8 +148,14 @@
   function colorFor(v){
     var i=0,k;
     for(k=0;k<TIERS.length;k++) if(v>=TIERS[k]) i=k;
-    if(v>TIERS[TIERS.length-1]*2)
-      i=(TIERS.length-1+Math.floor(Math.log(v/2048)/Math.LN2))%COLS.length;
+    if(v>TIERS[TIERS.length-1]*2){
+      // past the palette: cycle hues but deepen each wrap so tiers stay distinct
+      var wrap=Math.floor(Math.log(v/2048)/Math.LN2);
+      i=(TIERS.length-1+wrap)%COLS.length;
+      var m=COLS[i].match(/hsl\((\d+),(\d+)%,(\d+)%\)/);
+      return 'hsl('+m[1]+','+Math.min(96,+m[2]+10+4*wrap)+'%,'+
+        Math.max(36,+m[3]-8-4*wrap)+'%)';
+    }
     return COLS[i];
   }
   document.getElementById('lt1').style.background=colorFor(1);
