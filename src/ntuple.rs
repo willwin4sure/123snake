@@ -276,22 +276,26 @@ impl NTupleNet {
                 add_base(&mut images, &cells, tables.len() - 1);
             }
         }
-        // 5-cell diagonal staircases, anchor orbit reps (positional)
+        // 5-cell diagonal staircases: the 36 placements decompose into 6
+        // orbits under dihedral-8 (computed exhaustively; two orbits are
+        // self-symmetric), one positional table per orbit rep
         if cfg.staircase {
-            for &(r, c) in &[(0, 0), (0, 1), (0, 2)] {
-                let cells = [
-                    (r, c),
-                    (r + 1, c),
-                    (r + 1, c + 1),
-                    (r + 2, c + 1),
-                    (r + 2, c + 2),
-                ];
+            let reps: [[(usize, usize); 5]; 6] = [
+                [(0, 0), (0, 1), (1, 1), (1, 2), (2, 2)],
+                [(0, 1), (0, 2), (1, 0), (1, 1), (2, 0)],
+                [(0, 1), (0, 2), (1, 2), (1, 3), (2, 3)],
+                [(0, 1), (1, 1), (1, 2), (2, 2), (2, 3)],
+                [(0, 2), (1, 1), (1, 2), (2, 0), (2, 1)],
+                [(1, 1), (1, 2), (2, 2), (2, 3), (3, 3)],
+            ];
+            for cells in &reps {
                 tables.push(Lut::new(len5));
-                add_base(&mut images, &cells, tables.len() - 1);
+                add_base(&mut images, cells, tables.len() - 1);
             }
         }
-        // 2x3 blocks: positional per-orbit tables, or one shared
-        // translation-invariant table
+        // 2x3 blocks: the 24 placements (both orientations) decompose into 4
+        // orbits under dihedral-8 (two of size 8, two of size 4); positional
+        // per-orbit tables, or one shared translation-invariant table
         if cfg.with_2x3 {
             let shared = if cfg.pos_2x3 {
                 None
@@ -299,15 +303,13 @@ impl NTupleNet {
                 tables.push(Lut::new(m.pow(6)));
                 Some(tables.len() - 1)
             };
-            for &(r, c) in &[(0, 0), (0, 1), (1, 1)] {
-                let cells = [
-                    (r, c),
-                    (r, c + 1),
-                    (r, c + 2),
-                    (r + 1, c),
-                    (r + 1, c + 1),
-                    (r + 1, c + 2),
-                ];
+            let reps: [[(usize, usize); 6]; 4] = [
+                [(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2)],
+                [(0, 1), (0, 2), (0, 3), (1, 1), (1, 2), (1, 3)],
+                [(0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2)],
+                [(1, 1), (1, 2), (1, 3), (2, 1), (2, 2), (2, 3)],
+            ];
+            for cells in &reps {
                 let table = match shared {
                     Some(t) => t,
                     None => {
@@ -315,7 +317,7 @@ impl NTupleNet {
                         tables.len() - 1
                     }
                 };
-                add_base(&mut images, &cells, table);
+                add_base(&mut images, cells, table);
             }
         }
         let mut n_globals = 0;
@@ -882,6 +884,56 @@ mod tests {
         let tcodes = net.encode(&tcells);
         let (v, tv) = (net.value(&codes), net.value(&tcodes));
         assert!((v - tv).abs() < 1e-9, "{v} vs {tv}");
+    }
+
+    #[test]
+    fn full_placement_coverage() {
+        use std::collections::BTreeSet;
+        // every placement of every shape (all dihedral forms x all fitting
+        // anchors) must appear among the net's stamped images
+        fn placements(shape: &[(usize, usize)]) -> BTreeSet<BTreeSet<usize>> {
+            let mut forms: BTreeSet<Vec<(usize, usize)>> = BTreeSet::new();
+            for t in 0..8 {
+                let f: Vec<(usize, usize)> =
+                    shape.iter().map(|&(r, c)| dihedral(r, c, t)).collect();
+                let mr = f.iter().map(|p| p.0).min().unwrap();
+                let mc = f.iter().map(|p| p.1).min().unwrap();
+                let mut norm: Vec<(usize, usize)> =
+                    f.iter().map(|&(r, c)| (r - mr, c - mc)).collect();
+                norm.sort_unstable();
+                forms.insert(norm);
+            }
+            let mut out = BTreeSet::new();
+            for f in forms {
+                let h = f.iter().map(|p| p.0).max().unwrap() + 1;
+                let w = f.iter().map(|p| p.1).max().unwrap() + 1;
+                for ar in 0..=(N - h) {
+                    for ac in 0..=(N - w) {
+                        out.insert(f.iter().map(|&(r, c)| idx(r + ar, c + ac)).collect());
+                    }
+                }
+            }
+            out
+        }
+        let mut cfg = NetConfig::base();
+        cfg.staircase = true;
+        cfg.diagonals = true;
+        let net = NTupleNet::new(1.0, cfg);
+        let stamped: BTreeSet<BTreeSet<usize>> = net
+            .images
+            .iter()
+            .map(|img| img.cells.iter().map(|&c| c as usize).collect())
+            .collect();
+        for (name, shape) in [
+            ("2x2", vec![(0, 0), (0, 1), (1, 0), (1, 1)]),
+            ("2x3", vec![(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2)]),
+            ("plus", vec![(1, 1), (0, 1), (2, 1), (1, 0), (1, 2)]),
+            ("stair", vec![(0, 0), (1, 0), (1, 1), (2, 1), (2, 2)]),
+        ] {
+            for p in placements(&shape) {
+                assert!(stamped.contains(&p), "{name} placement missing: {p:?}");
+            }
+        }
     }
 
     #[test]
