@@ -29,8 +29,8 @@ HEAD = """<!doctype html>
 <meta name="description" content="123 Snake — drag chains of matching numbers and merge them into their sum. A recreation of the 2016 mobile puzzle Integer Snake.">
 <meta property="og:title" content="123 Snake">
 <meta property="og:description" content="Drag chains of matching numbers and merge them into their sum. How high can you score?">
-<meta property="og:url" content="https://willwin4sure.github.io/123snake/">
-<meta property="og:image" content="https://willwin4sure.github.io/123snake/og.png">
+<meta property="og:url" content="https://123snake.com/">
+<meta property="og:image" content="https://123snake.com/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
