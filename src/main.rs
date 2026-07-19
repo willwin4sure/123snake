@@ -55,6 +55,30 @@ fn cmd_serve(args: &[String]) {
     let html = include_str!("../solver/watch.html");
     let mut game: Option<Board> = None;
     let mut history: Vec<Board> = Vec::new();
+    let mut srng = Mulberry32::new(0x00C0_FFEE);
+    // unbiased action value: V(afterstate) is only trained on-policy and
+    // underestimates off-policy moves, so score a chosen move by sampling
+    // refills and taking the mean best-reply value
+    fn sampled_av(
+        net: &integer_snake::ntuple::NTupleNet,
+        b: &Board,
+        mv: &integer_snake::game::Move,
+        sum: u64,
+        rng: &mut Mulberry32,
+    ) -> f64 {
+        const S: u32 = 24;
+        let mut acc = 0.0;
+        for _ in 0..S {
+            let refills: Vec<u64> = (0..mv.path.len() - 1).map(|_| rng.rnd13()).collect();
+            let child = b.apply_with_refills(mv, &refills);
+            acc += sum as f64
+                + net
+                    .greedy(&child)
+                    .map(|(_, r, a)| r + net.value(&a))
+                    .unwrap_or(0.0);
+        }
+        acc / S as f64
+    }
     let listener = TcpListener::bind(("127.0.0.1", port)).expect("bind");
 
     fn state_json(b: &Board, v: Option<f64>, hist: usize) -> String {
@@ -178,8 +202,7 @@ fn cmd_serve(args: &[String]) {
                         let sum = b.cells[path[0] as usize] * path.len() as u64;
                         history.push(b.clone());
                         let mv = integer_snake::game::Move { path: path.clone() };
-                        let codes = net.encode(&b.cells);
-                        let av = sum as f64 + net.value(&net.afterstate(&codes, &mv, sum));
+                        let av = sampled_av(&net, b, &mv, sum, &mut srng);
                         b.apply(&mv);
                         let v = net.greedy(b).map(|(_, r, a)| r + net.value(&a));
                         let st = state_json(b, v, history.len());
@@ -209,9 +232,9 @@ fn cmd_serve(args: &[String]) {
             },
             "/step" => match &mut game {
                 Some(b) if b.has_moves() => {
-                    let (mv, r, after) = net.greedy(b).expect("moves exist");
-                    let av = r + net.value(&after);
+                    let (mv, _, _) = net.greedy(b).expect("moves exist");
                     let sum = b.cells[mv.path[0] as usize] * mv.path.len() as u64;
+                    let av = sampled_av(&net, b, &mv, sum, &mut srng);
                     let path_cells: Vec<String> = mv.path.iter().map(|c| c.to_string()).collect();
                     history.push(b.clone());
                     b.apply(&mv);
@@ -298,6 +321,64 @@ fn cmd_ntuple(args: &[String]) {
         alpha,
         net.cfg
     );
+    if let Some(spec) = arg_val(args, "--probe") {
+        // calibration probe: for states along greedy play, compare each
+        // ranked move's claimed value av = r + V(afterstate) against the
+        // sampled truth E_refills[r + best reply value]. Positive bias at
+        // rank k means V underestimates rank-k moves.
+        let (kmax, samples) = spec.split_once(':').expect("--probe ranks:samples");
+        let (kmax, samples): (usize, u32) = (
+            kmax.parse().expect("ranks"),
+            samples.parse().expect("samples"),
+        );
+        let mut rng = Mulberry32::new(777);
+        let mut acc = vec![(0.0f64, 0u32); kmax];
+        for g in 0..eval_games {
+            let mut b = Board::new_game(eval_seed0 + g);
+            let depth = rng.below(40) + 5;
+            for _ in 0..depth {
+                match net.greedy(&b) {
+                    Some((mv, _, _)) => b.apply(&mv),
+                    None => break,
+                }
+            }
+            if !b.has_moves() {
+                continue;
+            }
+            let codes = net.encode(&b.cells);
+            let mut ranked: Vec<(integer_snake::game::Move, f64, u64)> = b
+                .legal_moves_capped(integer_snake::game::MOVE_CAP)
+                .into_iter()
+                .map(|mv| {
+                    let sum = b.cells[mv.path[0] as usize] * mv.path.len() as u64;
+                    let av = sum as f64 + net.value(&net.afterstate(&codes, &mv, sum));
+                    (mv, av, sum)
+                })
+                .collect();
+            ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            for (k, (mv, av, sum)) in ranked.iter().take(kmax).enumerate() {
+                let mut m = 0.0;
+                for _ in 0..samples {
+                    let refills: Vec<u64> = (0..mv.path.len() - 1).map(|_| rng.rnd13()).collect();
+                    let child = b.apply_with_refills(mv, &refills);
+                    m += *sum as f64
+                        + net
+                            .greedy(&child)
+                            .map(|(_, r, a)| r + net.value(&a))
+                            .unwrap_or(0.0);
+                }
+                acc[k].0 += m / samples as f64 - av;
+                acc[k].1 += 1;
+            }
+        }
+        println!("calibration probe: E[realized] - claimed, by move rank");
+        for (k, (sum, n)) in acc.iter().enumerate() {
+            if *n > 0 {
+                println!("  rank {:>2}: {:>+7.1}  (n={})", k + 1, sum / *n as f64, n);
+            }
+        }
+        return;
+    }
     if games == 0 {
         // eval-only: percentiles over the eval block; --exp topk:samples
         // switches from one-ply greedy to depth-2 net-leaf expectimax
