@@ -34,11 +34,11 @@
   .stat b{font-size:20px;font-variant-numeric:tabular-nums;}
   #board{position:relative;width:min(88vw,424px);aspect-ratio:1;margin:0 auto;
     background:var(--well);border-radius:18px;touch-action:none;user-select:none;
-    -webkit-user-select:none;-webkit-touch-callout:none;
-    display:grid;grid-template-columns:repeat(5,1fr);gap:var(--gap);padding:var(--gap);
-    --gap:8px;}
-  .tile{position:relative;border-radius:calc(var(--cell)*.22);display:flex;
-    align-items:center;justify-content:center;cursor:pointer;}
+    -webkit-user-select:none;-webkit-touch-callout:none;overflow:visible;}
+  .tile{position:absolute;top:0;left:0;width:var(--cell);height:var(--cell);
+    border-radius:calc(var(--cell)*.22);display:flex;align-items:center;justify-content:center;
+    transition:transform var(--tdur,.2s) cubic-bezier(.25,.7,.3,1.08),opacity .17s,scale .17s;
+    will-change:transform;}
   .tile .num{font-weight:700;color:#23271F;font-size:calc(var(--cell)*.44);line-height:1;}
   .tile[data-d="3"] .num{font-size:calc(var(--cell)*.34)}
   .tile[data-d="4"] .num{font-size:calc(var(--cell)*.27)}
@@ -47,6 +47,7 @@
     outline-offset:calc(var(--cell)*-.075);}
   .tile.ghost{outline:calc(var(--cell)*.06) dashed var(--muted);
     outline-offset:calc(var(--cell)*-.06);}
+  .tile.merge{opacity:.15;scale:.45;}
   .tile.pop{animation:pk .24s ease-out;}
   @keyframes pk{0%{scale:.75}55%{scale:1.16}100%{scale:1}}
   .ord{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
@@ -57,7 +58,7 @@
   .ord.d90{transform:translateY(calc(50% + var(--gap)/2)) rotate(90deg);}
   .ord.d180{transform:translateX(calc(-50% - var(--gap)/2)) rotate(180deg);}
   .ord.d270{transform:translateY(calc(-50% - var(--gap)/2)) rotate(270deg);}
-  .fl{position:absolute;font-weight:800;font-size:calc(var(--cell)*.36);
+  .fl{position:absolute;top:0;left:0;font-weight:800;font-size:calc(var(--cell)*.36);
     color:var(--ink);pointer-events:none;animation:rise .8s ease-out forwards;z-index:6;}
   @keyframes rise{0%{translate:0 0;opacity:1}100%{translate:0 -48px;opacity:0}}
   #over{position:absolute;inset:0;border-radius:18px;background:var(--scrim);
@@ -111,6 +112,10 @@
     align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#23271F;}
   .mv .arr{color:var(--muted);font-weight:600;}
   .foot{color:var(--muted);font-size:11.5px;text-align:center;margin:20px 0 0;opacity:.8;}
+  @media (prefers-reduced-motion:reduce){
+    .tile{transition:none}
+    .tile.pop,.fl{animation-duration:.01s}
+  }
 </style>
 <div class="wrap">
   <header>
@@ -241,69 +246,124 @@
     soundOn=!soundOn;
     localStorage.setItem(KS,soundOn?'on':'off');
     setMuteLabel(); initAudio();
+    if(soundOn) sTick(0);
   };
 
-  // ---- board ----
+  // ---- board engine: ported from the game (absolute tiles, slide anims) ----
+  var N=5;
   var CHEV='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 5.5l6.5 6.5-6.5 6.5" stroke="rgba(30,34,28,.65)" stroke-width="7.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M8.5 5.5l6.5 6.5-6.5 6.5" stroke="#FCFDFA" stroke-width="3.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   var board=document.getElementById('board');
   var overEl=document.getElementById('over');
-  var els=[], cells=[], over=false, playing=false, moves=[], busy=false;
-  for(var i=0;i<25;i++){
-    (function(i){
-      var d=document.createElement('div');
-      d.className='tile';
-      d.innerHTML='<span class="num"></span><span class="ord">'+CHEV+'</span>';
-      d.dataset.i=i;
-      board.insertBefore(d,overEl);
-      els.push(d);
-    })(i);
+  var grid=null, cells=[], over=false, playing=false, busy=false;
+  var cell=0, gap=8, pad=10, stp=0;
+  function px(c){return pad+c*stp}
+  function place(t){t.el.style.transform='translate('+px(t.c)+'px,'+px(t.r)+'px)'}
+  function eachTile(fn){
+    for(var r=0;r<N;r++)for(var c=0;c<N;c++) if(grid&&grid[r][c]) fn(grid[r][c]);
   }
-  function fitCells(){
-    var w=els[0].getBoundingClientRect().width;
-    board.style.setProperty('--cell',w+'px');
+  function layout(){
+    var w=board.clientWidth;
+    gap=Math.max(9,Math.round(w*.03)); pad=Math.max(8,Math.round(w*.024));
+    cell=(w-2*pad-(N-1)*gap)/N; stp=cell+gap;
+    board.style.setProperty('--cell',cell+'px');
+    board.style.setProperty('--gap',gap+'px');
+    eachTile(place);
   }
-  window.addEventListener('resize',fitCells);
-  function render(cs,popHead){
-    cells=cs;
-    for(var i=0;i<25;i++){
-      var v=cs[i], e=els[i];
-      e.querySelector('.num').textContent=v;
-      e.dataset.d=String(v).length;
-      e.style.background=colorFor(v);
-      e.querySelector('.num').style.color=inkFor(v);
-      e.classList.remove('sel','ghost','pop');
-      e.querySelector('.ord').className='ord';
-      if(popHead===i){e.classList.add('pop')}
+  window.addEventListener('resize',layout);
+  function setV(t,v){
+    t.v=v; t.num.textContent=v;
+    t.el.style.background=colorFor(v);
+    t.num.style.color=inkFor(v);
+    t.el.dataset.d=String(v).length;
+  }
+  function makeTile(r,c,v,spawn){
+    var el=document.createElement('div'); el.className='tile';
+    var num=document.createElement('span'); num.className='num';
+    var ord=document.createElement('span'); ord.className='ord';
+    ord.innerHTML=CHEV;
+    el.appendChild(num); el.appendChild(ord);
+    var t={r:r,c:c,v:v,el:el,num:num,ord:ord};
+    setV(t,v); place(t);
+    if(spawn){
+      el.style.opacity='0'; el.style.scale='.3';
+      board.appendChild(el);
+      el.getBoundingClientRect();
+      requestAnimationFrame(function(){el.style.opacity='1';el.style.scale='1';});
+    }else{
+      board.appendChild(el);
     }
-    fitCells();
+    grid[r][c]=t;
+    return t;
   }
+  function buildBoard(cs){
+    if(grid) eachTile(function(t){t.el.remove()});
+    grid=[];
+    for(var r=0;r<N;r++){grid.push([null,null,null,null,null]);}
+    layout();
+    cells=cs.slice();
+    for(var i=0;i<25;i++) makeTile(Math.floor(i/5),i%5,cs[i],false);
+  }
+  function tileAt(i){return grid[Math.floor(i/5)][i%5]}
   function highlight(path,ghost){
     clearHighlight();
     for(var k=0;k<path.length;k++){
-      var e=els[path[k]];
-      e.classList.add(ghost?'ghost':'sel');
+      var t=tileAt(path[k]);
+      if(!t)continue;
+      t.el.classList.add(ghost?'ghost':'sel');
       if(k<path.length-1){
         var a=path[k], b=path[k+1];
         var dr=Math.floor(b/5)-Math.floor(a/5), dc=b%5-a%5;
-        var cls='ord dir'+(dc===1?'':dc===-1?' d180':dr===1?' d90':' d270');
-        e.querySelector('.ord').className=cls;
+        t.ord.className='ord dir'+(dc===1?'':dc===-1?' d180':dr===1?' d90':' d270');
       }
     }
   }
   function clearHighlight(){
-    for(var i=0;i<25;i++){
-      els[i].classList.remove('sel','ghost');
-      els[i].querySelector('.ord').className='ord';
-    }
+    eachTile(function(t){
+      t.el.classList.remove('sel','ghost');
+      t.ord.className='ord';
+    });
   }
-  function floatScore(head,sum){
-    var e=els[head], r=e.getBoundingClientRect(), br=board.getBoundingClientRect();
-    var f=document.createElement('span');
-    f.className='fl'; f.textContent='+'+sum;
-    f.style.left=(r.left-br.left+r.width*.22)+'px';
-    f.style.top=(r.top-br.top)+'px';
+  function floatScore(n,t){
+    var f=document.createElement('div');
+    f.className='fl'; f.textContent='+'+n;
+    f.style.transform='translate('+(px(t.c)+cell*.22)+'px,'+(px(t.r)-cell*.1)+'px)';
     board.appendChild(f);
-    setTimeout(function(){f.remove()},800);
+    f.addEventListener('animationend',function(){f.remove()});
+  }
+  // the game's merge animation, driven by a server response
+  function animateMove(r){
+    var f=Math.min(1,Math.max(.3,delayMs()/350));
+    board.style.setProperty('--tdur',Math.round(175*f)+'ms');
+    var path=r.path, headI=path[path.length-1];
+    var head=tileAt(headI), sum=r.sum;
+    var others=path.slice(0,-1).map(tileAt);
+    busy=true; clearHighlight();
+    others.forEach(function(o){
+      grid[o.r][o.c]=null;
+      o.el.classList.add('merge');
+      o.el.style.transform='translate('+px(head.c)+'px,'+px(head.r)+'px)';
+    });
+    sMerge(sum);
+    var vac=path.slice(0,-1);
+    return new Promise(function(res){
+      setTimeout(function(){
+        others.forEach(function(o){o.el.remove()});
+        setV(head,sum);
+        head.el.classList.add('pop');
+        setTimeout(function(){head.el.classList.remove('pop')},260);
+        floatScore(sum,head);
+        vac.forEach(function(i,k){
+          setTimeout(function(){
+            makeTile(Math.floor(i/5),i%5,r.cells[i],true);
+          },(60+k*35)*f);
+        });
+        setTimeout(function(){
+          cells=r.cells.slice();
+          busy=false;
+          res();
+        },(vac.length*35+300)*f);
+      },175*f);
+    });
   }
 
   // ---- server API ----
@@ -324,11 +384,10 @@
   }
   function refreshMoves(){
     return api('/moves').then(function(r){
-      moves=r.moves;
       document.getElementById('movecount').textContent=r.total+' legal';
       var tb=document.getElementById('mtb');
       tb.innerHTML='';
-      moves.forEach(function(m,k){
+      r.moves.forEach(function(m,k){
         var tr=document.createElement('tr');
         if(k===0)tr.className='bot';
         var v0=m.sum/m.path.length;
@@ -345,32 +404,28 @@
     });
   }
   function applyResult(r){
-    var sum=r.sum;
-    highlight(r.path,false);
-    sMerge(sum);
-    busy=true;
-    var wait=delayMs()*.55;
-    return new Promise(function(res){
-      setTimeout(function(){
-        render(r.cells,r.path[r.path.length-1]);
-        floatScore(r.path[r.path.length-1],sum);
-        setStat(r);
-        busy=false;
-        res(refreshMoves());
-      },wait);
+    return animateMove(r).then(function(){
+      setStat(r);
+      return refreshMoves();
     });
   }
   function newGame(){
     playing=false;document.getElementById('play').textContent='Play';
     api('/new?seed='+rndSeed()).then(function(st){
-      render(st.cells);setStat(st);refreshMoves();
+      buildBoard(st.cells);setStat(st);refreshMoves();
     });
   }
   function step(){
     if(over||busy)return Promise.resolve(false);
     return api('/step').then(function(r){
       if(r.done)return false;
-      return applyResult(r).then(function(){return !r.over});
+      highlight(r.path,false);
+      var pause=Math.max(90,delayMs()*.45);
+      return new Promise(function(res){
+        setTimeout(function(){
+          applyResult(r).then(function(){res(!r.over)});
+        },pause);
+      });
     });
   }
   function playPath(path){
@@ -385,9 +440,13 @@
   // ---- manual play: drag or click chains ----
   var chain=[], dragging=false;
   function cellAt(x,y){
-    var el=document.elementFromPoint(x,y);
-    while(el&&el!==board&&!el.dataset.i)el=el.parentElement;
-    return el&&el.dataset&&el.dataset.i!=null?+el.dataset.i:null;
+    var br=board.getBoundingClientRect();
+    var rx=x-br.left, ry=y-br.top;
+    var c=Math.floor((rx-pad)/stp), r=Math.floor((ry-pad)/stp);
+    if(r<0||r>4||c<0||c>4)return null;
+    var ox=rx-pad-c*stp, oy=ry-pad-r*stp;
+    if(ox>cell+gap*.5||oy>cell+gap*.5)return null;
+    return r*5+c;
   }
   function adj(a,b){
     var dr=Math.abs(Math.floor(a/5)-Math.floor(b/5)), dc=Math.abs(a%5-b%5);
@@ -423,7 +482,7 @@
       tryExtend(i); dragging=true; return;
     }
     if(chain.length&&i===chain[chain.length-1]){submitChain();return;}
-    chain=[]; tryExtend(i); dragging=true;
+    chain=[]; clearHighlight(); tryExtend(i); dragging=true;
   });
   board.addEventListener('pointermove',function(e){
     if(!dragging||over||busy)return;
@@ -448,7 +507,7 @@
   function loop(){
     if(!playing)return;
     step().then(function(go){
-      if(go&&playing)setTimeout(loop,Math.max(30,delayMs()*.45));
+      if(go&&playing)setTimeout(loop,Math.max(30,delayMs()*.35));
       else{playing=false;document.getElementById('play').textContent='Play';}
     });
   }
@@ -469,7 +528,7 @@
     playing=false;document.getElementById('play').textContent='Play';
     api('/undo').then(function(st){
       if(st.err)return;
-      sPop();render(st.cells);setStat(st);refreshMoves();
+      sPop();buildBoard(st.cells);setStat(st);refreshMoves();
     });
   };
   api('/info').then(function(m){
