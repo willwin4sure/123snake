@@ -54,18 +54,53 @@ fn cmd_serve(args: &[String]) {
 
     let html = include_str!("../solver/watch.html");
     let mut game: Option<Board> = None;
+    let mut history: Vec<Board> = Vec::new();
     let listener = TcpListener::bind(("127.0.0.1", port)).expect("bind");
 
-    fn state_json(b: &Board, v: Option<f64>) -> String {
+    fn state_json(b: &Board, v: Option<f64>, hist: usize) -> String {
         let cells: Vec<String> = b.cells.iter().map(|c| c.to_string()).collect();
         format!(
-            "{{\"cells\":[{}],\"score\":{},\"moves\":{},\"over\":{},\"v\":{}}}",
+            "{{\"cells\":[{}],\"score\":{},\"moves\":{},\"over\":{},\"hist\":{},\"v\":{}}}",
             cells.join(","),
             b.score,
             b.moves_made,
             u8::from(!b.has_moves()),
+            hist,
             v.map_or("null".to_string(), |x| format!("{x:.1}"))
         )
+    }
+
+    fn valid_path(b: &Board, path: &[u8]) -> bool {
+        use integer_snake::game::{neighbors, CELLS};
+        if path.len() < 2 || path.len() > CELLS {
+            return false;
+        }
+        let Some(&c0) = path.first() else { return false };
+        if c0 as usize >= CELLS {
+            return false;
+        }
+        let v0 = b.cells[c0 as usize];
+        let mut mask = 0u32;
+        for (k, &c) in path.iter().enumerate() {
+            let c = c as usize;
+            if c >= CELLS || mask & (1 << c) != 0 || b.cells[c] != v0 {
+                return false;
+            }
+            if k > 0 {
+                let prev = path[k - 1] as usize;
+                let mut ok = false;
+                neighbors(prev, |nb| {
+                    if nb == c {
+                        ok = true;
+                    }
+                });
+                if !ok {
+                    return false;
+                }
+            }
+            mask |= 1 << c;
+        }
+        true
     }
 
     for stream in listener.incoming() {
@@ -95,23 +130,98 @@ fn cmd_serve(args: &[String]) {
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(1);
                 let b = Board::new_game(seed);
+                history.clear();
                 let v = net.greedy(&b).map(|(_, r, a)| r + net.value(&a));
-                let json = state_json(&b, v);
+                let json = state_json(&b, v, 0);
                 game = Some(b);
                 ("application/json", json)
             }
+            "/moves" => match &game {
+                Some(b) => {
+                    let codes = net.encode(&b.cells);
+                    let mut ranked: Vec<(Vec<u8>, u64, f64)> = b
+                        .legal_moves_capped(integer_snake::game::MOVE_CAP)
+                        .into_iter()
+                        .map(|mv| {
+                            let sum = b.cells[mv.path[0] as usize] * mv.path.len() as u64;
+                            let val =
+                                sum as f64 + net.value(&net.afterstate(&codes, &mv, sum));
+                            (mv.path, sum, val)
+                        })
+                        .collect();
+                    ranked.sort_by(|a, b| {
+                        b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                    let total = ranked.len();
+                    let rows: Vec<String> = ranked
+                        .iter()
+                        .take(40)
+                        .map(|(p, s, v)| {
+                            let pc: Vec<String> = p.iter().map(|c| c.to_string()).collect();
+                            format!(
+                                "{{\"path\":[{}],\"sum\":{s},\"v\":{v:.1}}}",
+                                pc.join(",")
+                            )
+                        })
+                        .collect();
+                    (
+                        "application/json",
+                        format!("{{\"total\":{total},\"moves\":[{}]}}", rows.join(",")),
+                    )
+                }
+                None => ("application/json", "{\"total\":0,\"moves\":[]}".to_string()),
+            },
+            "/apply" => {
+                let path: Vec<u8> = query
+                    .strip_prefix("path=")
+                    .map(|s| s.split(',').filter_map(|x| x.parse().ok()).collect())
+                    .unwrap_or_default();
+                match &mut game {
+                    Some(b) if valid_path(b, &path) => {
+                        let sum = b.cells[path[0] as usize] * path.len() as u64;
+                        history.push(b.clone());
+                        let mv = integer_snake::game::Move { path: path.clone() };
+                        b.apply(&mv);
+                        let v = net.greedy(b).map(|(_, r, a)| r + net.value(&a));
+                        let st = state_json(b, v, history.len());
+                        let pc: Vec<String> = path.iter().map(|c| c.to_string()).collect();
+                        (
+                            "application/json",
+                            format!(
+                                "{{\"path\":[{}],\"sum\":{sum},{}",
+                                pc.join(","),
+                                st.trim_start_matches('{')
+                            ),
+                        )
+                    }
+                    _ => ("application/json", "{\"err\":\"invalid\"}".to_string()),
+                }
+            }
+            "/undo" => match &mut game {
+                Some(b) => match history.pop() {
+                    Some(prev) => {
+                        *b = prev;
+                        let v = net.greedy(b).map(|(_, r, a)| r + net.value(&a));
+                        ("application/json", state_json(b, v, history.len()))
+                    }
+                    None => ("application/json", "{\"err\":\"empty\"}".to_string()),
+                },
+                None => ("application/json", "{\"err\":\"nogame\"}".to_string()),
+            },
             "/step" => match &mut game {
                 Some(b) if b.has_moves() => {
                     let (mv, _, _) = net.greedy(b).expect("moves exist");
+                    let sum = b.cells[mv.path[0] as usize] * mv.path.len() as u64;
                     let path_cells: Vec<String> =
                         mv.path.iter().map(|c| c.to_string()).collect();
+                    history.push(b.clone());
                     b.apply(&mv);
                     let v = net.greedy(b).map(|(_, r, a)| r + net.value(&a));
-                    let st = state_json(b, v);
+                    let st = state_json(b, v, history.len());
                     (
                         "application/json",
                         format!(
-                            "{{\"path\":[{}],{}",
+                            "{{\"path\":[{}],\"sum\":{sum},{}",
                             path_cells.join(","),
                             st.trim_start_matches('{')
                         ),
