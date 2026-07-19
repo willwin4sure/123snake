@@ -75,8 +75,17 @@
   #over[hidden]{display:none;}
   #over h2{margin:0;font-size:24px;font-weight:800;}
   .overbtns{display:flex;gap:10px;}
+  #share{position:relative;}
+  #mute{min-width:7.8em;}
+  .tip{position:absolute;bottom:calc(100% + 9px);left:50%;transform:translateX(-50%);
+    background:var(--ink);color:var(--bg);font-size:12.5px;font-weight:700;
+    padding:5px 11px;border-radius:8px;opacity:0;transition:opacity .18s;
+    pointer-events:none;white-space:nowrap;}
+  .tip.show{opacity:1;}
+  .tip::after{content:'';position:absolute;top:100%;left:50%;transform:translateX(-50%);
+    border:5px solid transparent;border-top-color:var(--ink);}
   #over p{margin:2px 0 12px;color:var(--muted);font-weight:600;
-    user-select:text;-webkit-user-select:text;max-width:90%;}
+    user-select:text;-webkit-user-select:text;max-width:90%;white-space:pre-line;}
   .controls{display:flex;gap:10px;justify-content:center;margin-top:18px;flex-wrap:wrap;}
   button{font-family:inherit;font-size:14.5px;font-weight:700;color:var(--ink);
     background:var(--card);border:1px solid var(--line);border-radius:12px;
@@ -104,7 +113,7 @@
       <p id="final"></p>
       <div class="overbtns">
         <button id="again">Play again</button>
-        <button id="share">Share score</button>
+        <button id="share">Share score<span class="tip" id="sharetip"></span></button>
       </div>
     </div>
   </div>
@@ -368,16 +377,44 @@
   function sPop(){blip(240,0,.06,'sine',.06)}
   function sMerge(sum){
     blip(392,0,.1,'sine',.09); blip(523,.06,.12,'sine',.09);
-    if(sum>=24) blip(659,.12,.16,'triangle',.08);
-    if(sum>=96) blip(784,.18,.2,'triangle',.08);
+    if(sum>=12) blip(659,.12,.16,'triangle',.08);
+    if(sum>=48) blip(784,.18,.2,'triangle',.08);
+    if(sum>=192) blip(1047,.24,.22,'triangle',.08);
+    if(sum>=768) blip(1319,.3,.26,'triangle',.08);
+    if(sum>=3072) blip(1568,.36,.3,'triangle',.07);
+    if(sum>=12288) blip(2093,.42,.34,'triangle',.07);
+    if(sum>=49152) blip(2637,.48,.4,'triangle',.06);
   }
   function sOver(){blip(330,0,.14,'sine',.07);blip(262,.15,.14,'sine',.07);blip(196,.3,.24,'sine',.07)}
 
   var shareBtn=document.getElementById('share');
+  var shareTip=document.getElementById('sharetip');
   var SHARE_URL='https://willwin4sure.github.io/123snake/';
+  var tipTimer=null;
   function shareFeedback(msg){
-    shareBtn.textContent=msg;
-    setTimeout(function(){shareBtn.textContent='Share score';},1500);
+    shareTip.textContent=msg;
+    shareTip.classList.add('show');
+    clearTimeout(tipTimer);
+    tipTimer=setTimeout(function(){shareTip.classList.remove('show');},1600);
+  }
+  function emojiTile(v){
+    if(v<=3)return'⬜';
+    if(v<16)return'\u{1F7E6}';
+    if(v<64)return'\u{1F7E9}';
+    if(v<256)return'\u{1F7E8}';
+    if(v<1024)return'\u{1F7E7}';
+    if(v<4096)return'\u{1F7E5}';
+    if(v<16384)return'\u{1F7EA}';
+    return'⬛';
+  }
+  function emojiBoard(){
+    var rows=[];
+    for(var r=0;r<N;r++){
+      var line='';
+      for(var c=0;c<N;c++) line+=emojiTile(grid[r][c]?grid[r][c].v:1);
+      rows.push(line);
+    }
+    return rows.join('\n');
   }
   function copyChain(txt){
     var ta=document.createElement('textarea');
@@ -400,6 +437,7 @@
       settled=true;
       finalEl.textContent=txt;
       shareFeedback('Copy the text above');
+      shareTip.classList.add('show');
     };
     if(navigator.clipboard&&navigator.clipboard.writeText){
       setTimeout(fail,800);
@@ -411,7 +449,7 @@
     }
   }
   shareBtn.addEventListener('click',function(){
-    var txt='I scored '+score+' points in 123 Snake! Can you beat it? '+SHARE_URL;
+    var txt='123 Snake \u2014 '+score+' points!\n'+emojiBoard()+'\nPlay: '+SHARE_URL;
     if(navigator.share&&/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)){
       navigator.share({text:txt}).catch(function(){copyChain(txt);});
     }else{
