@@ -352,15 +352,25 @@ fn cmd_ntuple(args: &[String]) {
         window.0 += 1;
         window.1 += score;
         if (g + 1) % eval_every == 0 {
-            let ev = eval_greedy(&net, eval_seed0, eval_games);
-            println!(
-                "game {:>7}  train-mean {:>6.1}  eval-greedy {:>6.1}  nonzero {:>9}  {:>5.0}s",
-                g + 1,
-                window.1 as f64 / window.0 as f64,
-                ev,
-                net.nonzero(),
-                t0.elapsed().as_secs_f64()
-            );
+            if eval_games > 0 {
+                let ev = eval_greedy(&net, eval_seed0, eval_games);
+                println!(
+                    "game {:>7}  train-mean {:>6.1}  eval-greedy {:>6.1}  nonzero {:>9}  {:>5.0}s",
+                    g + 1,
+                    window.1 as f64 / window.0 as f64,
+                    ev,
+                    net.nonzero(),
+                    t0.elapsed().as_secs_f64()
+                );
+            } else {
+                println!(
+                    "game {:>7}  train-mean {:>6.1}  nonzero {:>9}  {:>5.0}s",
+                    g + 1,
+                    window.1 as f64 / window.0 as f64,
+                    net.nonzero(),
+                    t0.elapsed().as_secs_f64()
+                );
+            }
             window = (0, 0);
             if let Some(p) = &save {
                 net.save(p).expect("save net");
