@@ -75,8 +75,31 @@ fn cmd_ntuple(args: &[String]) {
         net.with_2x3
     );
     if games == 0 {
-        // eval-only: percentiles over the eval block
-        let mut sc = integer_snake::ntuple::eval_scores(&net, eval_seed0, eval_games);
+        // eval-only: percentiles over the eval block; --exp topk:samples
+        // switches from one-ply greedy to depth-2 net-leaf expectimax
+        let mut sc: Vec<u64> = match arg_val(args, "--exp") {
+            Some(spec) => {
+                use integer_snake::ntuple::NTupleSearchPolicy;
+                use integer_snake::search::Policy;
+                let (k, s) = spec.split_once(':').expect("--exp topk:samples");
+                let mut pol = NTupleSearchPolicy::new(
+                    net,
+                    k.parse().expect("topk"),
+                    s.parse().expect("samples"),
+                    99,
+                );
+                (0..eval_games)
+                    .map(|g| {
+                        let mut b = Board::new_game(eval_seed0 + g);
+                        while let Some(mv) = pol.choose(&b) {
+                            b.apply(&mv);
+                        }
+                        b.score
+                    })
+                    .collect()
+            }
+            None => integer_snake::ntuple::eval_scores(&net, eval_seed0, eval_games),
+        };
         sc.sort_unstable();
         let pct = |p: f64| sc[((sc.len() - 1) as f64 * p) as usize];
         println!(

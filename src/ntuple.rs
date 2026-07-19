@@ -308,6 +308,71 @@ impl crate::search::Policy for NTuplePolicy {
     }
 }
 
+/// Depth-2 expectimax over the net: root moves are pruned to the top-k by
+/// the one-ply proxy (r + V(afterstate)), then each survivor's chance node
+/// is estimated with `samples` sampled refills, valued by the best one-ply
+/// reply in the child.
+pub struct NTupleSearchPolicy {
+    pub net: NTupleNet,
+    pub topk: usize,
+    pub samples: u32,
+    pub rng: Mulberry32,
+}
+
+impl NTupleSearchPolicy {
+    pub fn new(net: NTupleNet, topk: usize, samples: u32, seed: u32) -> Self {
+        NTupleSearchPolicy {
+            net,
+            topk,
+            samples,
+            rng: Mulberry32::new(seed),
+        }
+    }
+}
+
+impl crate::search::Policy for NTupleSearchPolicy {
+    fn name(&self) -> String {
+        format!("ntuple-exp:k{}:s{}", self.topk, self.samples)
+    }
+    fn choose(&mut self, b: &Board) -> Option<Move> {
+        let codes = encode_board(&b.cells);
+        let mut scored: Vec<(Move, f64, f64)> = b
+            .legal_moves_capped(MOVE_CAP)
+            .into_iter()
+            .map(|mv| {
+                let v = b.cells[mv.path[0] as usize];
+                let sum = (v * mv.path.len() as u64) as f64;
+                let proxy = sum
+                    + self
+                        .net
+                        .value(&NTupleNet::afterstate(&codes, &mv, sum as u64));
+                (mv, sum, proxy)
+            })
+            .collect();
+        scored.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(self.topk.max(1));
+        let mut best: Option<(Move, f64)> = None;
+        for (mv, sum, _) in scored {
+            let mut acc = 0.0;
+            for _ in 0..self.samples {
+                let refills: Vec<u64> = (0..mv.path.len() - 1).map(|_| self.rng.rnd13()).collect();
+                let child = b.apply_with_refills(&mv, &refills);
+                let reply = self
+                    .net
+                    .greedy(&child)
+                    .map(|(_, r, after)| r + self.net.value(&after))
+                    .unwrap_or(0.0);
+                acc += reply;
+            }
+            let val = sum + acc / self.samples as f64;
+            if best.as_ref().is_none_or(|(_, bv)| val > *bv) {
+                best = Some((mv, val));
+            }
+        }
+        best.map(|(mv, _)| mv)
+    }
+}
+
 /// Greedy scores over `n` fresh games (no learning).
 pub fn eval_scores(net: &NTupleNet, seed0: u32, n: u32) -> Vec<u64> {
     (0..n)
