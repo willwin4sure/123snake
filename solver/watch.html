@@ -441,8 +441,8 @@
   function applyResult(r){
     // pace decomposition: action = chosen move value vs best available;
     // luck = how refills landed vs the afterstate's built-in expectation
-    if(prevV!=null&&r.av!=null){
-      setDelta('dmove',r.av-prevV);
+    if(r.av!=null){
+      setDelta('dmove',r.av-(r.base!=null?r.base:prevV||0));
       setDelta('dluck',r.sum+(r.v==null?0:r.v)-r.av);
     }
     prevV=r.v;

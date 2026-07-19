@@ -202,6 +202,14 @@ fn cmd_serve(args: &[String]) {
                         let sum = b.cells[path[0] as usize] * path.len() as u64;
                         history.push(b.clone());
                         let mv = integer_snake::game::Move { path: path.clone() };
+                        // fair baseline: the bot's best move, sampled the same way
+                        let base = net
+                            .greedy(b)
+                            .map(|(bm, _, _)| {
+                                let bsum = b.cells[bm.path[0] as usize] * bm.path.len() as u64;
+                                sampled_av(&net, b, &bm, bsum, &mut srng)
+                            })
+                            .unwrap_or(0.0);
                         let av = sampled_av(&net, b, &mv, sum, &mut srng);
                         b.apply(&mv);
                         let v = net.greedy(b).map(|(_, r, a)| r + net.value(&a));
@@ -210,7 +218,7 @@ fn cmd_serve(args: &[String]) {
                         (
                             "application/json",
                             format!(
-                                "{{\"path\":[{}],\"sum\":{sum},\"av\":{av:.1},{}",
+                                "{{\"path\":[{}],\"sum\":{sum},\"av\":{av:.1},\"base\":{base:.1},{}",
                                 pc.join(","),
                                 st.trim_start_matches('{')
                             ),
@@ -235,6 +243,7 @@ fn cmd_serve(args: &[String]) {
                     let (mv, _, _) = net.greedy(b).expect("moves exist");
                     let sum = b.cells[mv.path[0] as usize] * mv.path.len() as u64;
                     let av = sampled_av(&net, b, &mv, sum, &mut srng);
+                    let base = av; // the bot plays its own baseline
                     let path_cells: Vec<String> = mv.path.iter().map(|c| c.to_string()).collect();
                     history.push(b.clone());
                     b.apply(&mv);
@@ -243,7 +252,7 @@ fn cmd_serve(args: &[String]) {
                     (
                         "application/json",
                         format!(
-                            "{{\"path\":[{}],\"sum\":{sum},\"av\":{av:.1},{}",
+                            "{{\"path\":[{}],\"sum\":{sum},\"av\":{av:.1},\"base\":{base:.1},{}",
                             path_cells.join(","),
                             st.trim_start_matches('{')
                         ),
