@@ -211,6 +211,7 @@
       o.start(t0); o.stop(t0+(dur||.08)+.02);
     }catch(_){}
   }
+  var silentEl=null;
   function unlockAudio(){
     initAudio();
     if(AC){
@@ -218,6 +219,15 @@
         var b=AC.createBuffer(1,1,22050), src=AC.createBufferSource();
         src.buffer=b; src.connect(AC.destination); src.start(0);
       }catch(_){}
+    }
+    // iOS: a looping media element moves the audio session to "playback",
+    // which ignores the silent switch; WebAudio alone stays mutable
+    if(!silentEl){
+      try{
+        silentEl=new Audio('data:audio/wav;base64,UklGRrQBAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YZABAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA');
+        silentEl.loop=true; silentEl.setAttribute('playsinline','');
+        silentEl.play().catch(function(){silentEl=null;});
+      }catch(_){silentEl=null;}
     }
     ['touchend','pointerdown','keydown'].forEach(function(t){
       document.removeEventListener(t,unlockAudio,true);
