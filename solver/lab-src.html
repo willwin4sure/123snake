@@ -1,0 +1,689 @@
+<title>123 Snake — solver lab</title>
+<style>
+  :root{
+    --bg:#F3F5F0; --ink:#20241F; --muted:#67705F; --well:#E2E6DB;
+    --card:#FFFFFF; --line:#CBD1C3; --scrim:rgba(243,245,240,.88);
+    --font:ui-rounded,"SF Pro Rounded","Hiragino Maru Gothic ProN","Arial Rounded MT Bold",system-ui,-apple-system,"Segoe UI",sans-serif;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{--bg:#161A16; --ink:#EAEFE6; --muted:#939D8D; --well:#232A22;
+      --card:#1E241D; --line:#394336; --scrim:rgba(22,26,22,.9);}
+  }
+  :root[data-theme="dark"]{--bg:#161A16; --ink:#EAEFE6; --muted:#939D8D; --well:#232A22;
+    --card:#1E241D; --line:#394336; --scrim:rgba(22,26,22,.9);}
+  :root[data-theme="light"]{--bg:#F3F5F0; --ink:#20241F; --muted:#67705F; --well:#E2E6DB;
+    --card:#FFFFFF; --line:#CBD1C3; --scrim:rgba(243,245,240,.88);}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);
+    -webkit-tap-highlight-color:transparent;}
+  .wrap{max-width:470px;margin:0 auto;padding:26px 16px 44px;}
+  header{display:flex;justify-content:space-between;align-items:center;gap:12px;
+    flex-wrap:wrap;margin:0 0 18px;}
+  h1{display:flex;align-items:center;gap:5px;margin:0;font-size:27px;font-weight:800;
+    letter-spacing:.01em;}
+  h1 em{font-style:normal;margin-left:5px;}
+  .lt{display:inline-flex;width:31px;height:31px;border-radius:9px;align-items:center;
+    justify-content:center;font-size:17px;font-weight:700;color:#23271F;}
+  .stats{display:flex;gap:8px;}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:6px 14px 7px;min-width:76px;text-align:center;}
+  .stat .lbl{display:block;font-size:10.5px;font-weight:700;text-transform:uppercase;
+    letter-spacing:.09em;color:var(--muted);}
+  .stat b{font-size:20px;font-variant-numeric:tabular-nums;}
+  #board{position:relative;width:min(88vw,424px);aspect-ratio:1;margin:0 auto;
+    background:var(--well);border-radius:18px;touch-action:none;user-select:none;
+    -webkit-user-select:none;-webkit-touch-callout:none;overflow:visible;}
+  .tile{position:absolute;top:0;left:0;width:var(--cell);height:var(--cell);
+    border-radius:calc(var(--cell)*.22);display:flex;align-items:center;justify-content:center;
+    transition:transform .2s cubic-bezier(.25,.7,.3,1.08),opacity .17s,scale .17s;
+    will-change:transform;}
+  .tile .num{font-weight:700;color:#23271F;font-size:calc(var(--cell)*.44);line-height:1;}
+  .tile[data-d="3"] .num{font-size:calc(var(--cell)*.34)}
+  .tile[data-d="4"] .num{font-size:calc(var(--cell)*.27)}
+  .tile[data-d="5"] .num{font-size:calc(var(--cell)*.22)}
+  .tile.sel{outline:calc(var(--cell)*.075) solid #23271F;
+    outline-offset:calc(var(--cell)*-.075);}
+  .tile.merge{opacity:.15;scale:.45;}
+  .tile.pop{animation:pk .24s ease-out;}
+  @keyframes pk{0%{scale:.75}55%{scale:1.16}100%{scale:1}}
+  .ord{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    pointer-events:none;color:rgba(252,253,250,.95);z-index:3;}
+  .ord svg{width:34%;height:34%;display:none;}
+  .ord.dir svg{display:block;}
+  .ord.dir{transform:translateX(calc(50% + var(--gap)/2));}
+  .ord.d90{transform:translateY(calc(50% + var(--gap)/2)) rotate(90deg);}
+  .ord.d180{transform:translateX(calc(-50% - var(--gap)/2)) rotate(180deg);}
+  .ord.d270{transform:translateY(calc(-50% - var(--gap)/2)) rotate(270deg);}
+  .fl{position:absolute;top:0;left:0;font-weight:800;font-size:calc(var(--cell)*.36);
+    color:var(--ink);pointer-events:none;animation:rise .8s ease-out forwards;z-index:3;}
+  @keyframes rise{0%{translate:0 0;opacity:1}100%{translate:0 -48px;opacity:0}}
+  #over{position:absolute;inset:0;border-radius:18px;background:var(--scrim);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+    text-align:center;z-index:5;}
+  #over[hidden]{display:none;}
+  #over h2{margin:0;font-size:24px;font-weight:800;}
+  #over p{margin:2px 0 12px;color:var(--muted);font-weight:600;}
+  .controls{display:flex;gap:10px;justify-content:center;margin-top:18px;flex-wrap:wrap;}
+  button{font-family:inherit;font-size:14.5px;font-weight:700;color:var(--ink);
+    background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:9px 16px;cursor:pointer;}
+  button:hover{border-color:var(--muted);}
+  button:focus-visible{outline:2.5px solid var(--ink);outline-offset:2px;}
+  button:disabled{opacity:.4;cursor:default;border-color:var(--line);}
+  .foot{color:var(--muted);font-size:11.5px;text-align:center;margin:20px 0 0;opacity:.8;}
+  .hints{max-width:min(88vw,424px);margin:12px auto 0;display:flex;flex-direction:column;gap:6px;}
+  .hintrow{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);
+    border-radius:10px;padding:7px 12px;font-size:13.5px;cursor:pointer;font-weight:600;}
+  .hintrow:hover{border-color:var(--muted);}
+  .hintrow.best{border-color:#1F6FD8;}
+  .hintrow .ev{margin-left:auto;color:var(--muted);font-variant-numeric:tabular-nums;font-weight:600;}
+  .hintrow b{font-variant-numeric:tabular-nums;}
+  .hintnote{color:var(--muted);font-size:12px;text-align:center;margin:2px 0 0;}
+  .tile.hint{outline:calc(var(--cell)*.075) solid #1F6FD8;outline-offset:calc(var(--cell)*-.075);}
+  .tile.hint .ord{color:rgba(252,253,250,.95);}
+  .tab{opacity:.55;}
+  .tab.tabon{opacity:1;border-color:var(--muted);}
+  .pcards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;}
+  .pcard{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;}
+  .pcard h2{margin:0 0 8px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);}
+  .ptable{width:100%;border-collapse:collapse;font-size:13.5px;}
+  .ptable td{padding:3px 0;}
+  .ptable td:last-child{text-align:right;font-variant-numeric:tabular-nums;font-weight:700;}
+  .ptable tr.total td{border-top:1px solid var(--line);padding-top:6px;}
+  .classgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:3px;margin:0 0 8px;}
+  .classgrid div{aspect-ratio:1;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#23271F;}
+  .legend{display:flex;flex-wrap:wrap;gap:10px;font-size:11.5px;color:var(--muted);}
+  .legend span{display:flex;align-items:center;gap:4px;}
+  .lg{width:10px;height:10px;border-radius:3px;display:inline-block;}
+  .lg0{background:#CBD5C0;} .lg1{background:hsl(150,50%,64%);} .lg2{background:hsl(38,90%,64%);} .lg3{background:hsl(5,80%,76%);} .lg4{background:hsl(266,72%,78%);}
+  @media (prefers-reduced-motion:reduce){
+    .tile{transition:none}
+    .tile.pop,.fl{animation-duration:.01s}
+  }
+</style>
+<div class="wrap">
+  <header>
+    <h1><span class="lt" id="lt1">1</span><span class="lt" id="lt2">2</span><span class="lt" id="lt3">3</span><em>Snake</em></h1>
+    <div class="stats">
+      <div class="stat"><span class="lbl">Score</span><b id="score">0</b></div>
+      <div class="stat"><span class="lbl">Best</span><b id="best">0</b></div>
+    </div>
+  </header>
+  <div class="controls" style="margin:0 0 14px;">
+    <button id="tabPlay" class="tab tabon">Play</button>
+    <button id="tabPolicy" class="tab">Policy</button>
+  </div>
+  <div id="viewPlay">
+  <div id="board">
+    <div id="over" hidden>
+      <h2>No moves left</h2>
+      <p id="final"></p>
+      <button id="again">Play again</button>
+    </div>
+  </div>
+  <div class="controls">
+    <button id="undo" disabled>Undo</button>
+    <button id="newgame">New game</button>
+    <button id="mute">Sound: on</button>
+  </div>
+  <div class="controls">
+    <button id="solver">Solver: off</button>
+    <button id="playbest" disabled>Play best</button>
+    <button id="autoplay" disabled>Autoplay</button>
+  </div>
+  <div id="hints" class="hints" hidden></div>
+  </div>
+  <div id="viewPolicy" hidden>
+    <div class="pcards">
+      <div class="pcard">
+        <h2>Position value</h2>
+        <table class="ptable" id="evalTable"></table>
+      </div>
+      <div class="pcard">
+        <h2>Tile classes</h2>
+        <div id="classGrid" class="classgrid"></div>
+        <div class="legend">
+          <span><i class="lg lg0"></i>1&ndash;3</span>
+          <span><i class="lg lg1"></i>2<sup>a</sup>&middot;3<sup>b</sup></span>
+          <span><i class="lg lg2"></i>2<sup>k</sup> &ge; 4</span>
+          <span><i class="lg lg3"></i>prime &gt; 3</span>
+          <span><i class="lg lg4"></i>3<sup>b</sup>, b &ge; 2</span>
+        </div>
+      </div>
+      <div class="pcard">
+        <h2>Top chains</h2>
+        <table class="ptable" id="chainTable"></table>
+      </div>
+      <div class="pcard">
+        <h2 id="wTitle">Weights</h2>
+        <table class="ptable" id="wTable"></table>
+      </div>
+    </div>
+    <p class="hintnote" id="policyNote">Waiting for the engine&hellip;</p>
+  </div>
+  <p class="foot">Solver lab &mdash; the Rust engine (WebAssembly) owns the game state, unlimited undo, hints, autoplay, and this policy view.</p>
+</div>
+<script>
+(function(){
+  'use strict';
+  var N=5, KB='snake123.best', KS='snake123.sound';
+  var board=document.getElementById('board');
+  var scoreEl=document.getElementById('score'), bestEl=document.getElementById('best');
+  var overEl=document.getElementById('over'), finalEl=document.getElementById('final');
+  var undoBtn=document.getElementById('undo'), muteBtn=document.getElementById('mute');
+
+  var TIERS=[1,2,3,4,5,6,7,8,9,10,12,16,20,24,32,40,48,64,96,128,192,256,384,512,768,1024,1536,2048];
+  var COLS=['hsl(112,55%,70%)','hsl(48,88%,66%)','hsl(27,88%,66%)','hsl(266,72%,78%)',
+    'hsl(165,55%,66%)','hsl(84,60%,64%)','hsl(190,62%,70%)','hsl(322,75%,77%)',
+    'hsl(5,80%,76%)','hsl(230,70%,79%)','hsl(150,50%,64%)','hsl(38,90%,64%)',
+    'hsl(288,55%,76%)','hsl(70,65%,60%)','hsl(348,75%,75%)','hsl(174,55%,60%)',
+    'hsl(214,80%,72%)','hsl(24,75%,63%)','hsl(300,60%,74%)','hsl(130,55%,62%)',
+    'hsl(54,85%,58%)','hsl(262,65%,72%)','hsl(200,70%,64%)','hsl(336,70%,70%)',
+    'hsl(90,50%,58%)','hsl(44,90%,58%)','hsl(280,60%,68%)','hsl(10,70%,64%)'];
+  function colorFor(v){
+    var i=0,k;
+    for(k=0;k<TIERS.length;k++) if(v>=TIERS[k]) i=k;
+    if(v>TIERS[TIERS.length-1]*2)
+      i=(TIERS.length-1+Math.floor(Math.log(v/2048)/Math.LN2))%COLS.length;
+    return COLS[i];
+  }
+  document.getElementById('lt1').style.background=colorFor(1);
+  document.getElementById('lt2').style.background=colorFor(2);
+  document.getElementById('lt3').style.background=colorFor(3);
+
+  var grid, score=0, best=parseInt(localStorage.getItem(KB)||'0',10)||0;
+  var lock=true, path=[], gesture=null, histLen=0;
+  var cell=0, gap=8, pad=10, step=0;
+  bestEl.textContent=best;
+
+  function px(c){return pad+c*step}
+  function place(t){t.el.style.transform='translate('+px(t.c)+'px,'+px(t.r)+'px)'}
+  function layout(){
+    var w=board.clientWidth;
+    gap=Math.max(9,Math.round(w*.03)); pad=Math.max(8,Math.round(w*.024));
+    cell=(w-2*pad-(N-1)*gap)/N; step=cell+gap;
+    board.style.setProperty('--cell',cell+'px');
+    board.style.setProperty('--gap',gap+'px');
+    if(grid) eachTile(place);
+  }
+  function eachTile(fn){
+    for(var r=0;r<N;r++)for(var c=0;c<N;c++) if(grid[r][c]) fn(grid[r][c]);
+  }
+  function setV(t,v){
+    t.v=v; t.num.textContent=v;
+    t.el.style.background=colorFor(v);
+    t.el.dataset.d=String(v).length;
+  }
+  function makeTile(r,c,v,spawn){
+    var el=document.createElement('div'); el.className='tile';
+    var num=document.createElement('span'); num.className='num';
+    var ord=document.createElement('span'); ord.className='ord';
+    ord.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 5.5l6.5 6.5-6.5 6.5" stroke="rgba(30,34,28,.65)" stroke-width="7.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M8.5 5.5l6.5 6.5-6.5 6.5" stroke="#FCFDFA" stroke-width="3.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    el.appendChild(num); el.appendChild(ord);
+    var t={r:r,c:c,v:v,el:el,num:num,ord:ord};
+    setV(t,v); place(t);
+    if(spawn){
+      el.style.opacity='0'; el.style.scale='.3';
+      board.appendChild(el);
+      el.getBoundingClientRect();
+      requestAnimationFrame(function(){el.style.opacity='1';el.style.scale='1';});
+    }else{
+      board.appendChild(el);
+    }
+    grid[r][c]=t;
+    return t;
+  }
+  function values(){
+    var out=[],r,c;
+    for(r=0;r<N;r++){out.push([]);for(c=0;c<N;c++)out[r].push(grid[r][c]?grid[r][c].v:0);}
+    return out;
+  }
+  function build(vals){
+    board.querySelectorAll('.tile,.fl').forEach(function(e){e.remove()});
+    grid=[]; path=[];
+    for(var r=0;r<N;r++){grid.push([]);for(var c=0;c<N;c++){grid[r].push(null);makeTile(r,c,vals[r][c]);}}
+  }
+  function hud(){
+    scoreEl.textContent=score;
+    if(score>best){best=score;localStorage.setItem(KB,best);}
+    bestEl.textContent=best;
+    undoBtn.disabled=lock||!histLen;
+  }
+  function refresh(){
+    eachTile(function(t){t.el.classList.remove('sel');t.ord.className='ord';});
+    path.forEach(function(t,i){
+      t.el.classList.add('sel');
+      var nx=path[i+1];
+      t.ord.className=nx?'ord dir'+(nx.c>t.c?'':nx.c<t.c?' d180':nx.r>t.r?' d90':' d270'):'ord';
+    });
+  }
+  function toRows(flat){
+    var out=[],r,c;
+    for(r=0;r<N;r++){out.push([]);for(c=0;c<N;c++)out[r].push(flat[r*N+c]);}
+    return out;
+  }
+  function readState(){
+    var rp=wx.game_state();
+    var len=wx.result_len();
+    return JSON.parse(new TextDecoder().decode(new Uint8Array(wx.memory.buffer,rp,len)));
+  }
+  function syncFull(st){
+    score=st.score; histLen=st.history;
+    build(toRows(st.cells));
+    lock=false;
+    hud(); refresh(); updateUndoBtn();
+  }
+  function updateUndoBtn(){
+    undoBtn.disabled=lock||!histLen;
+    undoBtn.textContent=histLen>0?'Undo ('+histLen+')':'Undo';
+  }
+  function newGame(){
+    if(!wx) return;
+    overEl.hidden=true;
+    wx.game_new((Math.random()*4294967296)>>>0);
+    syncFull(readState());
+    if(solverOn) solverTick();
+  }
+
+  function hitCell(e){
+    var rect=board.getBoundingClientRect();
+    var x=e.clientX-rect.left, y=e.clientY-rect.top;
+    var c=Math.round((x-pad-cell/2)/step), r=Math.round((y-pad-cell/2)/step);
+    if(r<0||r>=N||c<0||c>=N) return null;
+    if(Math.abs(x-(px(c)+cell/2))>cell*.42) return null;
+    if(Math.abs(y-(px(r)+cell/2))>cell*.42) return null;
+    return {r:r,c:c};
+  }
+  function inPath(t){return path.indexOf(t)>=0}
+  function canExtend(t){
+    if(!path.length) return false;
+    var last=path[path.length-1];
+    return t.v===path[0].v && !inPath(t) &&
+      Math.abs(t.r-last.r)+Math.abs(t.c-last.c)===1;
+  }
+
+  board.addEventListener('pointerdown',function(e){
+    if(lock||overEl.hidden===false) return;
+    initAudio();
+    if(e.pointerId!==undefined){try{board.setPointerCapture(e.pointerId);}catch(_){}}
+    gesture={id:e.pointerId,added:false,downHead:false,deselect:false};
+    var pos=hitCell(e);
+    if(!pos){path=[];refresh();return;}
+    var t=grid[pos.r][pos.c];
+    if(!t){path=[];refresh();return;}
+    if(path.length===1&&t===path[0]){gesture.deselect=true;}
+    else if(path.length&&t===path[path.length-1]){gesture.downHead=true;}
+    else if(canExtend(t)){path.push(t);sTick(path.length-1);}
+    else if(path.length>=2&&t===path[path.length-2]){path.pop();sPop();}
+    else{path=[t];sTick(0);}
+    refresh();
+    e.preventDefault();
+  });
+  board.addEventListener('pointermove',function(e){
+    if(!gesture||e.pointerId!==gesture.id||lock) return;
+    var pos=hitCell(e);
+    if(!pos) return;
+    var t=grid[pos.r][pos.c];
+    if(!t) return;
+    if(!path.length){path=[t];gesture.added=true;sTick(0);refresh();return;}
+    if(t===path[path.length-1]) return;
+    if(path.length>=2&&t===path[path.length-2]){path.pop();gesture.added=true;sPop();refresh();return;}
+    if(canExtend(t)){path.push(t);gesture.added=true;sTick(path.length-1);refresh();}
+  });
+  function endGesture(e){
+    if(!gesture||(e.pointerId!==undefined&&e.pointerId!==gesture.id)) return;
+    var g=gesture; gesture=null;
+    if(lock) return;
+    if(g.deselect&&!g.added){path=[];sPop();}
+    else if(path.length>=2&&(g.added||g.downHead)) doMerge();
+    refresh();
+  }
+  board.addEventListener('pointerup',endGesture);
+  board.addEventListener('pointercancel',function(){gesture=null;});
+  document.addEventListener('keydown',function(e){
+    if(e.key==='Escape'){path=[];refresh();}
+  });
+
+  function doMerge(){
+    if(!wx) return;
+    lock=true; hud();
+    var head=path[path.length-1];
+    var sum=path[0].v*path.length;
+    var others=path.slice(0,-1);
+    var pcells=path.map(function(t){return t.r*N+t.c;});
+    var ptr=wx.input_ptr();
+    new Uint32Array(wx.memory.buffer,ptr,pcells.length).set(pcells);
+    if(!wx.game_apply(pcells.length)){lock=false;hud();return;}
+    var st=readState();
+    histLen=st.history;
+    others.forEach(function(o){
+      grid[o.r][o.c]=null;
+      o.el.classList.add('merge');
+      o.el.style.transform='translate('+px(head.c)+'px,'+px(head.r)+'px)';
+    });
+    path=[];
+    sMerge(sum);
+    var cells=others.map(function(o){return [o.r,o.c]});
+    setTimeout(function(){
+      others.forEach(function(o){o.el.remove()});
+      setV(head,sum);
+      head.el.classList.add('pop');
+      setTimeout(function(){head.el.classList.remove('pop')},260);
+      score=st.score; hud();
+      floatScore(sum,head);
+      cells.forEach(function(rc,i){
+        setTimeout(function(){makeTile(rc[0],rc[1],st.cells[rc[0]*N+rc[1]],true)},60+i*35);
+      });
+      setTimeout(function(){
+        lock=false; hud(); refresh(); updateUndoBtn();
+        if(st.over) gameOver();
+        solverTick();
+      },cells.length*35+300);
+    },175);
+  }
+  function floatScore(n,t){
+    var f=document.createElement('div');
+    f.className='fl'; f.textContent='+'+n;
+    f.style.transform='translate('+(px(t.c)+cell*.22)+'px,'+(px(t.r)-cell*.1)+'px)';
+    board.appendChild(f);
+    f.addEventListener('animationend',function(){f.remove()});
+  }
+  function gameOver(){
+    finalEl.textContent='Final score: '+score;
+    overEl.hidden=false;
+    sOver();
+  }
+  function undo(){
+    if(lock||!wx) return;
+    if(!wx.game_undo()) return;
+    overEl.hidden=true;
+    syncFull(readState());
+    sUndo();
+    if(solverOn) solverTick();
+  }
+
+  var AC=null, soundOn=localStorage.getItem(KS)!=='off';
+  function setMuteLabel(){muteBtn.textContent='Sound: '+(soundOn?'on':'off')}
+  setMuteLabel();
+  function initAudio(){
+    if(!soundOn) return;
+    try{
+      if(!AC) AC=new (window.AudioContext||window.webkitAudioContext)();
+      if(AC.state==='suspended') AC.resume();
+    }catch(_){AC=null;}
+  }
+  function blip(f,dt,dur,type,g){
+    if(!AC||!soundOn) return;
+    try{
+      var t0=AC.currentTime+(dt||0);
+      var o=AC.createOscillator(), gn=AC.createGain();
+      o.type=type||'sine'; o.frequency.value=f;
+      gn.gain.setValueAtTime(0,t0);
+      gn.gain.linearRampToValueAtTime(g||.09,t0+.012);
+      gn.gain.exponentialRampToValueAtTime(.0005,t0+(dur||.08));
+      o.connect(gn); gn.connect(AC.destination);
+      o.start(t0); o.stop(t0+(dur||.08)+.02);
+    }catch(_){}
+  }
+  var PENTA=[0,2,4,7,9];
+  function sTick(i){
+    i=Math.min(i,14);
+    blip(330*Math.pow(2,(PENTA[i%5]+12*Math.floor(i/5))/12),0,.07,'sine',.08);
+  }
+  function sPop(){blip(240,0,.06,'sine',.06)}
+  function sMerge(sum){
+    blip(392,0,.1,'sine',.09); blip(523,.06,.12,'sine',.09);
+    if(sum>=24) blip(659,.12,.16,'triangle',.08);
+    if(sum>=96) blip(784,.18,.2,'triangle',.08);
+  }
+  function sUndo(){blip(230,0,.08,'sine',.07);blip(170,.07,.1,'sine',.07)}
+  function sOver(){blip(330,0,.14,'sine',.07);blip(262,.15,.14,'sine',.07);blip(196,.3,.24,'sine',.07)}
+
+  muteBtn.addEventListener('click',function(){
+    soundOn=!soundOn;
+    localStorage.setItem(KS,soundOn?'on':'off');
+    if(soundOn){initAudio();sTick(0);}
+    setMuteLabel();
+  });
+  undoBtn.addEventListener('click',undo);
+  document.getElementById('newgame').addEventListener('click',newGame);
+  document.getElementById('again').addEventListener('click',newGame);
+  window.addEventListener('resize',layout);
+
+  window.__snake={
+    values:values,
+    score:function(){return score},
+    tryPath:function(cells){
+      path=[];
+      for(var i=0;i<cells.length;i++){
+        var t=grid[cells[i][0]][cells[i][1]];
+        if(!t) return false;
+        if(i===0) path=[t];
+        else if(canExtend(t)) path.push(t);
+        else {path=[];return false;}
+      }
+      refresh();
+      return true;
+    },
+    release:function(){if(path.length>=2)doMerge();},
+    locked:function(){return lock},
+    forceOver:function(){gameOver()}
+  };
+
+
+  // ---- Solver mode: the Rust engine (expectimax) compiled to WebAssembly ----
+  var SNAKE_WASM='__WASM_B64__';
+  var wx=null, wasmLoading=false, solverOn=false, autoOn=false, hintsData=null, policyData=null;
+  var solverBtn=document.getElementById('solver');
+  var playBtn=document.getElementById('playbest');
+  var autoBtn=document.getElementById('autoplay');
+  var hintsEl=document.getElementById('hints');
+
+  function initWasm(cb){
+    if(wx){cb();return;}
+    if(wasmLoading)return;
+    wasmLoading=true;
+    try{
+      var bin=atob(SNAKE_WASM);
+      var bytes=new Uint8Array(bin.length);
+      for(var i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+      WebAssembly.instantiate(bytes,{}).then(function(res){
+        wx=res.instance.exports; wasmLoading=false; cb();
+      },function(){wasmLoading=false; solverFail();});
+    }catch(_){wasmLoading=false; solverFail();}
+  }
+  function solverFail(){
+    solverOn=false;
+    solverBtn.textContent='Solver: unavailable';
+    solverBtn.disabled=true;
+    if(!grid){
+      overEl.querySelector('h2').textContent='Engine failed to load';
+      finalEl.textContent='Reload the page to retry';
+      overEl.hidden=false;
+    }
+  }
+  function flatCells(){
+    var out=[];
+    for(var r=0;r<N;r++)for(var c=0;c<N;c++) out.push(grid[r][c]?grid[r][c].v:0);
+    return out;
+  }
+  function analyze(){
+    if(!wx) return;
+    var ptr=wx.input_ptr();
+    new Uint32Array(wx.memory.buffer,ptr,25).set(flatCells());
+    var rp=wx.analyze(2,16,24,5,(Math.random()*4294967296)>>>0);
+    var len=wx.result_len();
+    var txt=new TextDecoder().decode(new Uint8Array(wx.memory.buffer,rp,len));
+    var j=JSON.parse(txt);
+    hintsData=j.moves;
+    policyData=j;
+    renderHints();
+    renderPolicy();
+  }
+  function clearHintMarks(){
+    eachTile(function(t){
+      t.el.classList.remove('hint');
+      if(!t.el.classList.contains('sel')) t.ord.className='ord';
+    });
+  }
+  function markHint(h){
+    clearHintMarks();
+    h.path.forEach(function(ci,i){
+      var t=grid[Math.floor(ci/N)][ci%N];
+      if(!t) return;
+      t.el.classList.add('hint');
+      var nc=h.path[i+1];
+      if(nc!==undefined){
+        var t2=grid[Math.floor(nc/N)][nc%N];
+        if(t2) t.ord.className='ord dir'+(t2.c>t.c?'':t2.c<t.c?' d180':t2.r>t.r?' d90':' d270');
+      }
+    });
+  }
+  function playMove(cells){
+    if(lock||!solverOn) return;
+    var tiles=cells.map(function(ci){return grid[Math.floor(ci/N)][ci%N];});
+    if(tiles.some(function(t){return !t;})) return;
+    path=tiles;
+    if(path.length>=2) doMerge();
+  }
+  function renderHints(){
+    hintsEl.innerHTML='';
+    clearHintMarks();
+    if(!solverOn||!hintsData){hintsEl.hidden=true;return;}
+    hintsEl.hidden=false;
+    if(!hintsData.length){
+      var p=document.createElement('p');
+      p.className='hintnote'; p.textContent='No moves available';
+      hintsEl.appendChild(p);
+      playBtn.disabled=true; autoBtn.disabled=true;
+      return;
+    }
+    hintsData.forEach(function(h,i){
+      var row=document.createElement('div');
+      row.className='hintrow'+(i===0?' best':'');
+      row.innerHTML='<b>'+h.value+' × '+h.path.length+' → '+h.sum+'</b><span class="ev">V '+h.ev.toFixed(0)+'</span>';
+      row.addEventListener('mouseenter',function(){markHint(h);});
+      row.addEventListener('click',function(){playMove(h.path);});
+      hintsEl.appendChild(row);
+    });
+    var note=document.createElement('p');
+    note.className='hintnote';
+    note.textContent='Hover to preview, click to play · V = the engine\u2019s ranking value, not points';
+    hintsEl.appendChild(note);
+    markHint(hintsData[0]);
+    playBtn.disabled=false; autoBtn.disabled=false;
+  }
+  function stopAuto(){
+    autoOn=false;
+    autoBtn.textContent='Autoplay';
+  }
+  function solverTick(){
+    if(!solverOn) return;
+    if(overEl.hidden===false){
+      stopAuto(); hintsData=[]; renderHints(); return;
+    }
+    analyze();
+    if(autoOn&&hintsData&&hintsData.length){
+      setTimeout(function(){
+        if(autoOn&&solverOn&&!lock&&overEl.hidden) playMove(hintsData[0].path);
+      },450);
+    }
+  }
+  solverBtn.addEventListener('click',function(){
+    solverOn=!solverOn;
+    solverBtn.textContent='Solver: '+(solverOn?'on':'off');
+    if(solverOn){
+      solverBtn.textContent=wx?'Solver: on':'Solver: loading\u2026';
+      initWasm(function(){
+        if(!solverOn) return;
+        solverBtn.textContent='Solver: on';
+        solverTick();
+      });
+    }else{
+      stopAuto(); hintsData=null;
+      hintsEl.hidden=true; hintsEl.innerHTML='';
+      clearHintMarks();
+      playBtn.disabled=true; autoBtn.disabled=true;
+    }
+  });
+  playBtn.addEventListener('click',function(){
+    if(hintsData&&hintsData.length&&!lock) playMove(hintsData[0].path);
+  });
+  autoBtn.addEventListener('click',function(){
+    if(autoOn){stopAuto();return;}
+    autoOn=true;
+    autoBtn.textContent='Autoplay: on';
+    if(hintsData&&hintsData.length&&!lock&&overEl.hidden) playMove(hintsData[0].path);
+  });
+  board.addEventListener('pointerdown',function(){
+    if(solverOn){clearHintMarks();stopAuto();}
+  },true);
+  document.getElementById('newgame').addEventListener('click',stopAuto);
+  document.getElementById('again').addEventListener('click',stopAuto);
+
+  var CLASS_COLORS=['#CBD5C0','hsl(150,50%,64%)','hsl(38,90%,64%)','hsl(5,80%,76%)','hsl(266,72%,78%)'];
+  var tabPlay=document.getElementById('tabPlay');
+  var tabPolicy=document.getElementById('tabPolicy');
+  var viewPlay=document.getElementById('viewPlay');
+  var viewPolicy=document.getElementById('viewPolicy');
+  function showTab(which){
+    var play=which==='play';
+    viewPlay.hidden=!play;
+    viewPolicy.hidden=play;
+    tabPlay.classList.toggle('tabon',play);
+    tabPolicy.classList.toggle('tabon',!play);
+    if(play){layout();}
+    else{
+      if(!policyData&&wx&&grid) analyze();
+      renderPolicy();
+    }
+  }
+  tabPlay.addEventListener('click',function(){showTab('play')});
+  tabPolicy.addEventListener('click',function(){showTab('policy')});
+  function fmtSigned(x){return (x>=0?'+':'\u2212')+Math.abs(x).toFixed(1)}
+  function renderPolicy(){
+    if(viewPolicy.hidden) return;
+    var note=document.getElementById('policyNote');
+    if(!policyData){note.textContent='Turn on the solver (Play tab) or wait for the engine\u2026';return;}
+    note.textContent='Live from the Rust engine \u00b7 expectimax depth 2 \u00b7 16 refill samples';
+    var ev=policyData.eval;
+    var rows=[
+      ['Game score','+'+score],
+      ['Ladder tiles (2\u1d4f\u00b73)',fmtSigned(ev.smooth)],
+      ['Three-heavy (3\u1d47, b \u2265 2)',fmtSigned(ev.three)],
+      ['Powers of two \u2265 4',fmtSigned(ev.pow2)],
+      ['Off-family (prime > 3)',fmtSigned(ev.off)],
+      ['Optionality \u00b7 '+ev.pairs+' pairs',fmtSigned(ev.opt)]
+    ];
+    if(ev.over) rows.push(['Dead position',fmtSigned(ev.over)]);
+    rows.push(['Position value',(score+ev.total).toFixed(1)]);
+    document.getElementById('evalTable').innerHTML=rows.map(function(r,i){
+      var cls=i===rows.length-1?' class="total"':'';
+      return '<tr'+cls+'><td>'+r[0]+'</td><td>'+r[1]+'</td></tr>';
+    }).join('');
+    var flat=flatCells();
+    document.getElementById('classGrid').innerHTML=policyData.classes.map(function(cl,i){
+      return '<div style="background:'+CLASS_COLORS[cl]+'">'+flat[i]+'</div>';
+    }).join('');
+    var ct=document.getElementById('chainTable');
+    if(!policyData.moves.length){ct.innerHTML='<tr><td>No moves</td><td></td></tr>';}
+    else{
+      var best=policyData.moves[0].ev;
+      ct.innerHTML=policyData.moves.map(function(h,i){
+        return '<tr><td>'+(i+1)+'. '+h.value+' \u00d7 '+h.path.length+' \u2192 '+h.sum+'</td><td>'+
+          (i===0?'V '+h.ev.toFixed(0):'\u2212'+(best-h.ev).toFixed(1))+'</td></tr>';
+      }).join('');
+    }
+    if(policyData.weights){
+      document.getElementById('wTitle').textContent='Weights \u00b7 '+policyData.weights.name;
+      document.getElementById('wTable').innerHTML=policyData.weights.rows.map(function(r){
+        return '<tr><td>'+r[0]+'</td><td>'+r[1]+'</td></tr>';
+      }).join('');
+    }
+  }
+
+  layout();
+  hud();
+  initWasm(function(){ newGame(); });
+})();
+</script>

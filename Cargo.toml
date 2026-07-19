@@ -1,0 +1,26 @@
+[package]
+name = "integer_snake"
+version = "0.1.0"
+edition = "2021"
+description = "Engine, heuristics, and tree-search solvers for 123 Snake (Integer Snake)"
+
+[lib]
+name = "integer_snake"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "snake"
+path = "src/main.rs"
+
+[dependencies]
+
+[profile.release]
+opt-level = 3
+lto = true
+
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+panic = "abort"
+strip = true
