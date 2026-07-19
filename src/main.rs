@@ -75,7 +75,9 @@ fn cmd_serve(args: &[String]) {
         if path.len() < 2 || path.len() > CELLS {
             return false;
         }
-        let Some(&c0) = path.first() else { return false };
+        let Some(&c0) = path.first() else {
+            return false;
+        };
         if c0 as usize >= CELLS {
             return false;
         }
@@ -144,24 +146,19 @@ fn cmd_serve(args: &[String]) {
                         .into_iter()
                         .map(|mv| {
                             let sum = b.cells[mv.path[0] as usize] * mv.path.len() as u64;
-                            let val =
-                                sum as f64 + net.value(&net.afterstate(&codes, &mv, sum));
+                            let val = sum as f64 + net.value(&net.afterstate(&codes, &mv, sum));
                             (mv.path, sum, val)
                         })
                         .collect();
-                    ranked.sort_by(|a, b| {
-                        b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal)
-                    });
+                    ranked
+                        .sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
                     let total = ranked.len();
                     let rows: Vec<String> = ranked
                         .iter()
                         .take(40)
                         .map(|(p, s, v)| {
                             let pc: Vec<String> = p.iter().map(|c| c.to_string()).collect();
-                            format!(
-                                "{{\"path\":[{}],\"sum\":{s},\"v\":{v:.1}}}",
-                                pc.join(",")
-                            )
+                            format!("{{\"path\":[{}],\"sum\":{s},\"v\":{v:.1}}}", pc.join(","))
                         })
                         .collect();
                     (
@@ -212,8 +209,7 @@ fn cmd_serve(args: &[String]) {
                 Some(b) if b.has_moves() => {
                     let (mv, _, _) = net.greedy(b).expect("moves exist");
                     let sum = b.cells[mv.path[0] as usize] * mv.path.len() as u64;
-                    let path_cells: Vec<String> =
-                        mv.path.iter().map(|c| c.to_string()).collect();
+                    let path_cells: Vec<String> = mv.path.iter().map(|c| c.to_string()).collect();
                     history.push(b.clone());
                     b.apply(&mv);
                     let v = net.greedy(b).map(|(_, r, a)| r + net.value(&a));
