@@ -272,7 +272,16 @@ fn cmd_ntuple(args: &[String]) {
         staircase: args.iter().any(|a| a == "--staircase"),
         diagonals: args.iter().any(|a| a == "--diagonals"),
         global: args.iter().any(|a| a == "--global"),
+        stages: arg_val(args, "--stages")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1),
     };
+    let lambda: f32 = arg_val(args, "--lambda")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.0);
+    let trace_len: usize = arg_val(args, "--trace")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(16);
     let mut net = match arg_val(args, "--load") {
         Some(p) => NTupleNet::load(&p, alpha).expect("load net"),
         None => NTupleNet::new(alpha, cfg),
@@ -330,7 +339,16 @@ fn cmd_ntuple(args: &[String]) {
     let t0 = std::time::Instant::now();
     let mut window: (u64, u64) = (0, 0); // (games, score) since last report
     for g in 0..games {
-        let (score, _) = train_game(&mut net, seed0.wrapping_add(g));
+        let (score, _) = if lambda > 0.0 {
+            integer_snake::ntuple::train_game_lambda(
+                &mut net,
+                seed0.wrapping_add(g),
+                lambda,
+                trace_len,
+            )
+        } else {
+            train_game(&mut net, seed0.wrapping_add(g))
+        };
         window.0 += 1;
         window.1 += score;
         if (g + 1) % eval_every == 0 {

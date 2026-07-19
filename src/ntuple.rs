@@ -117,6 +117,10 @@ pub struct NetConfig {
     /// (a) symmetry-canonical positions of the two largest tiles (625
     /// entries), (b) big-tile dispersion bucket x max-tile tier (160).
     pub global: bool,
+    /// Weight-set count for multi-stage learning (Jaskowski 2017): 1 or 3.
+    /// With 3, the stage is keyed by the board's max tile (<96, <768, >=768)
+    /// and every table is replicated per stage.
+    pub stages: usize,
 }
 
 impl NetConfig {
@@ -128,6 +132,7 @@ impl NetConfig {
             staircase: false,
             diagonals: false,
             global: false,
+            stages: 1,
         }
     }
 }
@@ -180,7 +185,8 @@ fn dihedral(r: usize, c: usize, t: usize) -> (usize, usize) {
 
 const SAVE_MAGIC_V2: u32 = 0x4E54_5632; // "NTV2"
 const SAVE_MAGIC_V3: u32 = 0x4E54_5633; // "NTV3": adds the diagonals flag
-const SAVE_MAGIC: u32 = 0x4E54_5634; // "NTV4": adds the global flag
+const SAVE_MAGIC_V4: u32 = 0x4E54_5634; // "NTV4": adds the global flag
+const SAVE_MAGIC: u32 = 0x4E54_5635; // "NTV5": adds the stage count
 
 /// Approximate magnitude of a cell code, for ranking "largest tiles" in the
 /// global features. Exact on spawns and the ladder (which dominates big
@@ -215,8 +221,10 @@ pub struct NTupleNet {
     pub alpha: f32,
     pub cfg: NetConfig,
     m: usize,
-    /// Number of trailing tables that are global features, not tuple images.
+    /// Number of trailing tables (per stage) that are global features.
     n_globals: usize,
+    /// Tables per stage; stage s uses tables[s*ntab_stage..(s+1)*ntab_stage].
+    ntab_stage: usize,
     /// Dihedral index permutations: perms[t][i] = image of cell i.
     perms: Vec<[u8; CELLS]>,
 }
@@ -316,6 +324,15 @@ impl NTupleNet {
             tables.push(Lut::new(20 * 8)); // dispersion bucket x max tier
             n_globals = 2;
         }
+        // multi-stage: replicate the whole per-stage table set
+        let ntab_stage = tables.len();
+        assert!(cfg.stages == 1 || cfg.stages == 3, "stages must be 1 or 3");
+        for _ in 1..cfg.stages {
+            for t in 0..ntab_stage {
+                let len = tables[t].w.len();
+                tables.push(Lut::new(len));
+            }
+        }
         let perms: Vec<[u8; CELLS]> = (0..8)
             .map(|t| {
                 let mut p = [0u8; CELLS];
@@ -335,7 +352,25 @@ impl NTupleNet {
             cfg,
             m,
             n_globals,
+            ntab_stage,
             perms,
+        }
+    }
+
+    /// Stage of a board encoding: 0 below max tile 96, 1 below 768, else 2
+    /// (always 0 for single-stage nets).
+    fn stage_of(&self, codes: &[u8; CELLS]) -> usize {
+        if self.cfg.stages == 1 {
+            return 0;
+        }
+        let a = self.cfg.alphabet;
+        let mx = codes.iter().map(|&c| code_mag(c, a)).max().unwrap_or(1);
+        if mx < 96 {
+            0
+        } else if mx < 768 {
+            1
+        } else {
+            2
         }
     }
 
@@ -401,13 +436,14 @@ impl NTupleNet {
     }
 
     pub fn value(&self, codes: &[u8; CELLS]) -> f64 {
+        let off = self.stage_of(codes) * self.ntab_stage;
         let mut v = 0.0f64;
         for img in &self.images {
-            v += self.tables[img.table].w[self.index(img, codes)] as f64;
+            v += self.tables[off + img.table].w[self.index(img, codes)] as f64;
         }
         if self.n_globals > 0 {
             let g = self.global_indices(codes);
-            let base = self.tables.len() - self.n_globals;
+            let base = off + self.ntab_stage - self.n_globals;
             for (k, &gi) in g.iter().enumerate() {
                 v += self.tables[base + k].w[gi] as f64;
             }
@@ -417,6 +453,14 @@ impl NTupleNet {
 
     /// TC-TD update of V(codes) toward target.
     pub fn update(&mut self, codes: &[u8; CELLS], target: f64) {
+        let delta = (target - self.value(codes)) as f32;
+        self.nudge(codes, delta);
+    }
+
+    /// Apply a raw TD error to V(codes) through the TC machinery. `update`
+    /// is `nudge(target - V)`; TD(lambda) traces call this with decayed
+    /// errors.
+    pub fn nudge(&mut self, codes: &[u8; CELLS], delta: f32) {
         fn bump(t: &mut Lut, i: usize, per: f32, delta: f32) {
             let rate = if t.a[i] > 0.0 {
                 (t.e[i].abs() / t.a[i]).min(1.0)
@@ -427,18 +471,18 @@ impl NTupleNet {
             t.e[i] += delta;
             t.a[i] += delta.abs();
         }
-        let delta = (target - self.value(codes)) as f32;
+        let off = self.stage_of(codes) * self.ntab_stage;
         let per = self.alpha * delta / (self.images.len() + self.n_globals) as f32;
         for k in 0..self.images.len() {
             let i = {
                 let img = &self.images[k];
                 self.index(img, codes)
             };
-            bump(&mut self.tables[self.images[k].table], i, per, delta);
+            bump(&mut self.tables[off + self.images[k].table], i, per, delta);
         }
         if self.n_globals > 0 {
             let g = self.global_indices(codes);
-            let base = self.tables.len() - self.n_globals;
+            let base = off + self.ntab_stage - self.n_globals;
             for (k, &gi) in g.iter().enumerate() {
                 bump(&mut self.tables[base + k], gi, per, delta);
             }
@@ -489,6 +533,7 @@ impl NTupleNet {
         wr.write_all(&u32::from(self.cfg.staircase).to_le_bytes())?;
         wr.write_all(&u32::from(self.cfg.diagonals).to_le_bytes())?;
         wr.write_all(&u32::from(self.cfg.global).to_le_bytes())?;
+        wr.write_all(&(self.cfg.stages as u32).to_le_bytes())?;
         wr.write_all(&(self.tables.len() as u32).to_le_bytes())?;
         for t in &self.tables {
             wr.write_all(&(t.w.len() as u64).to_le_bytes())?;
@@ -507,7 +552,10 @@ impl NTupleNet {
         let mut b8 = [0u8; 8];
         rd.read_exact(&mut b4)?;
         let first = u32::from_le_bytes(b4);
-        let (cfg, ntab) = if first == SAVE_MAGIC || first == SAVE_MAGIC_V3 || first == SAVE_MAGIC_V2
+        let (cfg, ntab) = if first == SAVE_MAGIC
+            || first == SAVE_MAGIC_V4
+            || first == SAVE_MAGIC_V3
+            || first == SAVE_MAGIC_V2
         {
             let mut word = || -> std::io::Result<u32> {
                 rd.read_exact(&mut b4)?;
@@ -526,10 +574,15 @@ impl NTupleNet {
             } else {
                 word()? != 0
             };
-            let global = if first == SAVE_MAGIC {
+            let global = if first == SAVE_MAGIC || first == SAVE_MAGIC_V4 {
                 word()? != 0
             } else {
                 false
+            };
+            let stages = if first == SAVE_MAGIC {
+                word()? as usize
+            } else {
+                1
             };
             let ntab = word()? as usize;
             (
@@ -540,6 +593,7 @@ impl NTupleNet {
                     staircase,
                     diagonals,
                     global,
+                    stages,
                 },
                 ntab,
             )
@@ -600,6 +654,54 @@ pub fn train_game(net: &mut NTupleNet, seed: u32) -> (u64, u32) {
                     net.update(&pa, r + net.value(&after));
                 }
                 prev = Some(after);
+                b.apply(&mv);
+            }
+        }
+    }
+}
+
+/// One self-play game with online TD(lambda): each TD error also nudges the
+/// recent afterstates with geometrically decayed weight, propagating credit
+/// for long-horizon plays (corner building) much faster than TD(0).
+pub fn train_game_lambda(
+    net: &mut NTupleNet,
+    seed: u32,
+    lambda: f32,
+    trace_len: usize,
+) -> (u64, u32) {
+    fn apply_traces(
+        net: &mut NTupleNet,
+        traces: &std::collections::VecDeque<[u8; CELLS]>,
+        lambda: f32,
+        delta: f32,
+    ) {
+        let mut f = 1.0f32;
+        for s in traces {
+            net.nudge(s, delta * f);
+            f *= lambda;
+            if f < 0.05 {
+                break;
+            }
+        }
+    }
+    let mut b = Board::new_game(seed);
+    let mut traces: std::collections::VecDeque<[u8; CELLS]> = Default::default();
+    loop {
+        match net.greedy(&b) {
+            None => {
+                if let Some(last) = traces.front() {
+                    let delta = -(net.value(last) as f32);
+                    apply_traces(net, &traces, lambda, delta);
+                }
+                return (b.score, b.moves_made);
+            }
+            Some((mv, r, after)) => {
+                if let Some(last) = traces.front() {
+                    let delta = (r + net.value(&after) - net.value(last)) as f32;
+                    apply_traces(net, &traces, lambda, delta);
+                }
+                traces.push_front(after);
+                traces.truncate(trace_len);
                 b.apply(&mv);
             }
         }
@@ -788,6 +890,7 @@ mod tests {
         let path = dir.to_str().unwrap();
         let mut cfg = small_cfg();
         cfg.alphabet = Alphabet::Fine;
+        cfg.stages = 3;
         cfg.staircase = true;
         let mut net = NTupleNet::new(1.0, cfg);
         let b = Board::new_game(11);
