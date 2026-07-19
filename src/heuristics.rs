@@ -748,7 +748,6 @@ pub fn evaluate(b: &Board, w: &Weights) -> f64 {
     val
 }
 
-
 /// Number of raw features emitted by `features()` for value calibration.
 pub const N_FEATURES: usize = 30;
 

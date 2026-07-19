@@ -49,5 +49,8 @@ fn flood_board_movegen_is_fair_and_bounded() {
     let has_far_pair = moves
         .iter()
         .any(|m| m.path.len() == 2 && m.path.contains(&18) && m.path.contains(&19));
-    assert!(has_far_pair, "far 2-2 pair was starved out of move generation");
+    assert!(
+        has_far_pair,
+        "far 2-2 pair was starved out of move generation"
+    );
 }

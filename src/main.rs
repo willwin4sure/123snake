@@ -144,10 +144,18 @@ fn cmd_tune(args: &[String]) {
 /// visited state: {"g":game,"c":[25 cells],"p":[chosen path cells],"y":remaining}.
 /// Terminal states have "p":[]. The path is the teacher policy's actual move.
 fn cmd_dump(args: &[String]) {
-    let n: usize = arg_val(args, "--n").and_then(|v| v.parse().ok()).unwrap_or(2000);
-    let cap: u32 = arg_val(args, "--cap").and_then(|v| v.parse().ok()).unwrap_or(300);
-    let seed0: u32 = arg_val(args, "--seed0").and_then(|v| v.parse().ok()).unwrap_or(50_000);
-    let threads: usize = arg_val(args, "--threads").and_then(|v| v.parse().ok()).unwrap_or(8);
+    let n: usize = arg_val(args, "--n")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2000);
+    let cap: u32 = arg_val(args, "--cap")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(300);
+    let seed0: u32 = arg_val(args, "--seed0")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50_000);
+    let threads: usize = arg_val(args, "--threads")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(8);
     let spec = arg_val(args, "--policy").unwrap_or_else(|| "exp:d2:s12:k16:t4".to_string());
     let out_path = arg_val(args, "--out").unwrap_or_else(|| "selfplay.jsonl".to_string());
     if let Err(e) = parse_policy(&spec, 0) {
@@ -177,8 +185,7 @@ fn cmd_dump(args: &[String]) {
                     let mut b = Board::new_game(board_seed);
                     let mut recs: Vec<(String, u64)> = Vec::new();
                     loop {
-                        let cells: Vec<String> =
-                            b.cells.iter().map(|v| v.to_string()).collect();
+                        let cells: Vec<String> = b.cells.iter().map(|v| v.to_string()).collect();
                         if b.moves_made >= cap {
                             recs.push((format!("\"c\":[{}],\"p\":[]", cells.join(",")), b.score));
                             break;
@@ -198,7 +205,10 @@ fn cmd_dump(args: &[String]) {
                                 b.apply(&mv);
                             }
                             None => {
-                                recs.push((format!("\"c\":[{}],\"p\":[]", cells.join(",")), b.score));
+                                recs.push((
+                                    format!("\"c\":[{}],\"p\":[]", cells.join(",")),
+                                    b.score,
+                                ));
                                 break;
                             }
                         }
@@ -224,12 +234,22 @@ fn cmd_dump(args: &[String]) {
 /// is validated on a held-out block of episodes and printed as a Rust literal
 /// ready to paste in as a CalVal preset.
 fn cmd_calibrate(args: &[String]) {
-    let n: usize = arg_val(args, "--n").and_then(|v| v.parse().ok()).unwrap_or(2000);
-    let cap: u32 = arg_val(args, "--cap").and_then(|v| v.parse().ok()).unwrap_or(300);
-    let seed0: u32 = arg_val(args, "--seed0").and_then(|v| v.parse().ok()).unwrap_or(40_000);
-    let threads: usize = arg_val(args, "--threads").and_then(|v| v.parse().ok()).unwrap_or(8);
+    let n: usize = arg_val(args, "--n")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2000);
+    let cap: u32 = arg_val(args, "--cap")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(300);
+    let seed0: u32 = arg_val(args, "--seed0")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(40_000);
+    let threads: usize = arg_val(args, "--threads")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(8);
     let spec = arg_val(args, "--policy").unwrap_or_else(|| "exp:d2:s8:k12:t4".to_string());
-    let lambda: f64 = arg_val(args, "--lambda").and_then(|v| v.parse().ok()).unwrap_or(1.0);
+    let lambda: f64 = arg_val(args, "--lambda")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1.0);
     let holdout: f64 = 0.2;
 
     if let Err(e) = parse_policy(&spec, 0) {
@@ -358,22 +378,33 @@ fn cmd_calibrate(args: &[String]) {
                 sst += (y - mean) * (y - mean);
             }
         }
-        (1.0 - sse / sst.max(1e-9), (sse / cnt.max(1) as f64).sqrt(), cnt)
+        (
+            1.0 - sse / sst.max(1e-9),
+            (sse / cnt.max(1) as f64).sqrt(),
+            cnt,
+        )
     };
     let (r2_tr, rmse_tr, n_tr) = metrics(&episodes[..split]);
     let (r2_ho, rmse_ho, n_ho) = metrics(&episodes[split..]);
     println!("train:   n={n_tr} (from {split} episodes)  R2={r2_tr:.4}  RMSE={rmse_tr:.1}");
-    println!("holdout: n={n_ho} (from {} episodes)  R2={r2_ho:.4}  RMSE={rmse_ho:.1}", episodes.len() - split);
+    println!(
+        "holdout: n={n_ho} (from {} episodes)  R2={r2_ho:.4}  RMSE={rmse_ho:.1}",
+        episodes.len() - split
+    );
     let _ = n_train;
 
-    println!("
-coefficients (predicted remaining score):");
+    println!(
+        "
+coefficients (predicted remaining score):"
+    );
     println!("  bias: {:.3}", beta[0]);
     for (i, name) in FEATURE_NAMES.iter().enumerate() {
         println!("  {name}: {:.4}", beta[i + 1]);
     }
-    println!("
-Rust literal for CalVal:");
+    println!(
+        "
+Rust literal for CalVal:"
+    );
     println!("CalVal {{ beta0: {:.6}, betas: [", beta[0]);
     for i in 0..N_FEATURES {
         println!("    {:.6},", beta[i + 1]);
