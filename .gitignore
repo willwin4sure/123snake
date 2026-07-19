@@ -2,3 +2,4 @@
 /.venv
 ml/*.jsonl
 ml/*.pt
+.DS_Store
