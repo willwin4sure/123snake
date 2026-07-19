@@ -256,7 +256,7 @@ fn cmd_ntuple(args: &[String]) {
         .unwrap_or(5000);
     let eval_games: u32 = arg_val(args, "--eval-games")
         .and_then(|v| v.parse().ok())
-        .unwrap_or(100);
+        .unwrap_or(1000);
     let eval_seed0: u32 = arg_val(args, "--eval-seed0")
         .and_then(|v| v.parse().ok())
         .unwrap_or(500_000);
