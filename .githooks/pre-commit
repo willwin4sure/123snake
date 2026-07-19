@@ -1,0 +1,10 @@
+#!/bin/sh
+# Auto-format staged Rust files so CI's `cargo fmt --check` can never fail.
+# Enable with: git config core.hooksPath .githooks
+files=$(git diff --cached --name-only --diff-filter=ACM | grep '\.rs$')
+[ -z "$files" ] && exit 0
+cargo fmt || exit 1
+for f in $files; do
+  git add "$f"
+done
+exit 0
