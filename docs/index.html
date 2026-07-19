@@ -75,7 +75,8 @@
   #over[hidden]{display:none;}
   #over h2{margin:0;font-size:24px;font-weight:800;}
   .overbtns{display:flex;gap:10px;}
-  #over p{margin:2px 0 12px;color:var(--muted);font-weight:600;}
+  #over p{margin:2px 0 12px;color:var(--muted);font-weight:600;
+    user-select:text;-webkit-user-select:text;max-width:90%;}
   .controls{display:flex;gap:10px;justify-content:center;margin-top:18px;flex-wrap:wrap;}
   button{font-family:inherit;font-size:14.5px;font-weight:700;color:var(--ink);
     background:var(--card);border:1px solid var(--line);border-radius:12px;
@@ -373,16 +374,48 @@
   function sOver(){blip(330,0,.14,'sine',.07);blip(262,.15,.14,'sine',.07);blip(196,.3,.24,'sine',.07)}
 
   var shareBtn=document.getElementById('share');
-  shareBtn.addEventListener('click',function(){
-    var url=location.protocol.indexOf('http')===0?' '+location.href:'';
-    var txt='I scored '+score+' points in 123 Snake! Can you beat it?'+url;
-    if(navigator.share){
-      navigator.share({text:txt}).catch(function(){});
-    }else if(navigator.clipboard&&navigator.clipboard.writeText){
+  var SHARE_URL='https://willwin4sure.github.io/123snake/';
+  function shareFeedback(msg){
+    shareBtn.textContent=msg;
+    setTimeout(function(){shareBtn.textContent='Share score';},1500);
+  }
+  function copyChain(txt){
+    var ta=document.createElement('textarea');
+    ta.value=txt;
+    ta.style.position='fixed';
+    ta.style.left='-1000px';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    var ok=false;
+    try{ok=document.execCommand('copy');}catch(_){}
+    ta.remove();
+    if(ok){
+      shareFeedback('Copied!');
+      return;
+    }
+    var settled=false;
+    var fail=function(){
+      if(settled) return;
+      settled=true;
+      finalEl.textContent=txt;
+      shareFeedback('Copy the text above');
+    };
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      setTimeout(fail,800);
       navigator.clipboard.writeText(txt).then(function(){
-        shareBtn.textContent='Copied!';
-        setTimeout(function(){shareBtn.textContent='Share score';},1500);
-      },function(){});
+        if(!settled){settled=true;shareFeedback('Copied!');}
+      },fail);
+    }else{
+      fail();
+    }
+  }
+  shareBtn.addEventListener('click',function(){
+    var txt='I scored '+score+' points in 123 Snake! Can you beat it? '+SHARE_URL;
+    if(navigator.share&&/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)){
+      navigator.share({text:txt}).catch(function(){copyChain(txt);});
+    }else{
+      copyChain(txt);
     }
   });
   muteBtn.addEventListener('click',function(){
