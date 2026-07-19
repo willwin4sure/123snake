@@ -305,6 +305,12 @@ fn cmd_ntuple(args: &[String]) {
     let lambda: f32 = arg_val(args, "--lambda")
         .and_then(|v| v.parse().ok())
         .unwrap_or(0.0);
+    let (eps_rank, eps_rand): (f32, f32) = arg_val(args, "--explore")
+        .and_then(|v| {
+            let (a, b) = v.split_once(':')?;
+            Some((a.parse().ok()?, b.parse().ok()?))
+        })
+        .unwrap_or((0.0, 0.0));
     let trace_len: usize = arg_val(args, "--trace")
         .and_then(|v| v.parse().ok())
         .unwrap_or(16);
@@ -424,14 +430,21 @@ fn cmd_ntuple(args: &[String]) {
     let mut window: (u64, u64) = (0, 0); // (games, score) since last report
     for g in 0..games {
         let (score, _) = if lambda > 0.0 {
-            integer_snake::ntuple::train_game_lambda(
+            integer_snake::ntuple::train_game_lambda_eps(
                 &mut net,
                 seed0.wrapping_add(g),
                 lambda,
                 trace_len,
+                eps_rank,
+                eps_rand,
             )
         } else {
-            train_game(&mut net, seed0.wrapping_add(g))
+            integer_snake::ntuple::train_game_eps(
+                &mut net,
+                seed0.wrapping_add(g),
+                eps_rank,
+                eps_rand,
+            )
         };
         window.0 += 1;
         window.1 += score;

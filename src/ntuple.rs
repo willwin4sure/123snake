@@ -639,19 +639,71 @@ impl NTupleNet {
     }
 }
 
+/// Move selection for training: greedy, or with probability `eps_rank` a
+/// uniform pick among ranks 2..=8, or with probability `eps_rand` a uniform
+/// random legal move. Exploratory afterstates receive TD updates too, which
+/// calibrates V on off-policy moves (the probe's rank bias). Returns the
+/// chosen (move, reward, afterstate, explored?).
+#[allow(clippy::type_complexity)]
+fn choose_train(
+    net: &NTupleNet,
+    b: &Board,
+    rng: &mut Mulberry32,
+    eps_rank: f32,
+    eps_rand: f32,
+) -> Option<(Move, f64, [u8; CELLS], bool)> {
+    let roll = rng.next_f64() as f32;
+    if roll >= eps_rank + eps_rand {
+        return net.greedy(b).map(|(mv, r, a)| (mv, r, a, false));
+    }
+    let codes = net.encode(&b.cells);
+    let mut scored: Vec<(Move, u64, f64)> = b
+        .legal_moves_capped(MOVE_CAP)
+        .into_iter()
+        .map(|mv| {
+            let sum = b.cells[mv.path[0] as usize] * mv.path.len() as u64;
+            let val = sum as f64 + net.value(&net.afterstate(&codes, &mv, sum));
+            (mv, sum, val)
+        })
+        .collect();
+    if scored.is_empty() {
+        return None;
+    }
+    let pick = if roll < eps_rand {
+        rng.below(scored.len())
+    } else {
+        scored.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+        let hi = scored.len().min(8);
+        if hi <= 1 {
+            0
+        } else {
+            1 + rng.below(hi - 1)
+        }
+    };
+    let (mv, sum, _) = scored.swap_remove(pick);
+    let after = net.afterstate(&codes, &mv, sum);
+    Some((mv, sum as f64, after, true))
+}
+
 /// One self-play game with TD(0) updates. Returns (score, moves).
 pub fn train_game(net: &mut NTupleNet, seed: u32) -> (u64, u32) {
+    train_game_eps(net, seed, 0.0, 0.0)
+}
+
+/// TD(0) self-play with optional epsilon-exploration.
+pub fn train_game_eps(net: &mut NTupleNet, seed: u32, eps_rank: f32, eps_rand: f32) -> (u64, u32) {
     let mut b = Board::new_game(seed);
+    let mut xrng = Mulberry32::new(seed ^ 0x9E37_79B9);
     let mut prev: Option<[u8; CELLS]> = None;
     loop {
-        match net.greedy(&b) {
+        match choose_train(net, &b, &mut xrng, eps_rank, eps_rand) {
             None => {
                 if let Some(pa) = prev {
                     net.update(&pa, 0.0);
                 }
                 return (b.score, b.moves_made);
             }
-            Some((mv, r, after)) => {
+            Some((mv, r, after, _)) => {
                 if let Some(pa) = prev {
                     net.update(&pa, r + net.value(&after));
                 }
@@ -671,6 +723,20 @@ pub fn train_game_lambda(
     lambda: f32,
     trace_len: usize,
 ) -> (u64, u32) {
+    train_game_lambda_eps(net, seed, lambda, trace_len, 0.0, 0.0)
+}
+
+/// TD(lambda) self-play with optional epsilon-exploration; traces are cut at
+/// exploratory moves (Watkins), since earlier afterstates must not inherit
+/// credit through an action the greedy policy did not choose.
+pub fn train_game_lambda_eps(
+    net: &mut NTupleNet,
+    seed: u32,
+    lambda: f32,
+    trace_len: usize,
+    eps_rank: f32,
+    eps_rand: f32,
+) -> (u64, u32) {
     fn apply_traces(
         net: &mut NTupleNet,
         traces: &std::collections::VecDeque<[u8; CELLS]>,
@@ -687,9 +753,10 @@ pub fn train_game_lambda(
         }
     }
     let mut b = Board::new_game(seed);
+    let mut xrng = Mulberry32::new(seed ^ 0x9E37_79B9);
     let mut traces: std::collections::VecDeque<[u8; CELLS]> = Default::default();
     loop {
-        match net.greedy(&b) {
+        match choose_train(net, &b, &mut xrng, eps_rank, eps_rand) {
             None => {
                 if let Some(last) = traces.front() {
                     let delta = -(net.value(last) as f32);
@@ -697,10 +764,13 @@ pub fn train_game_lambda(
                 }
                 return (b.score, b.moves_made);
             }
-            Some((mv, r, after)) => {
+            Some((mv, r, after, explored)) => {
                 if let Some(last) = traces.front() {
                     let delta = (r + net.value(&after) - net.value(last)) as f32;
                     apply_traces(net, &traces, lambda, delta);
+                }
+                if explored {
+                    traces.clear();
                 }
                 traces.push_front(after);
                 traces.truncate(trace_len);
