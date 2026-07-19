@@ -73,6 +73,7 @@
     padding:9px 16px;cursor:pointer;}
   button:hover{border-color:var(--muted);}
   button:disabled{opacity:.4;cursor:default;border-color:var(--line);}
+  #play{min-width:5.4em;}
   .speed{display:flex;align-items:center;gap:9px;background:var(--card);
     border:1px solid var(--line);border-radius:12px;padding:7px 14px;}
   .speed .lbl{font-size:10.5px;font-weight:700;text-transform:uppercase;
@@ -134,7 +135,7 @@
     <button id="mute">Sound: on</button>
     <div class="speed">
       <span class="lbl">Speed</span>
-      <input type="range" id="speed" min="0" max="100" value="55">
+      <input type="range" id="speed" min="0" max="4" step="1" value="2">
       <output id="speedout"></output>
     </div>
   </div>
@@ -147,6 +148,10 @@
 </div>
 <script>
 (function(){
+  function rndSeed(){
+    try{var u=new Uint32Array(1);crypto.getRandomValues(u);return u[0];}
+    catch(_){return (Math.random()*4294967296)>>>0;}
+  }
   // ---- colors: exact copy of the game's colorFor (incl. mild deepening) ----
   var TIERS=[1,2,3,4,5,6,7,8,9,10,12,16,20,24,32,40,48,64,96,128,192,256,384,512,768,1024,1536,2048];
   var COLS=['hsl(112,55%,70%)','hsl(48,88%,66%)','hsl(27,88%,66%)','hsl(266,72%,78%)',
@@ -189,6 +194,7 @@
   function blip(f,dt,dur,type,g){
     if(!AC||!soundOn) return;
     try{
+      if(AC.state==='suspended') AC.resume();
       var t0=AC.currentTime+(dt||0);
       var o=AC.createOscillator(), gn=AC.createGain();
       o.type=type||'sine'; o.frequency.value=f;
@@ -199,6 +205,21 @@
       o.start(t0); o.stop(t0+(dur||.08)+.02);
     }catch(_){}
   }
+  function unlockAudio(){
+    initAudio();
+    if(AC){
+      try{
+        var b=AC.createBuffer(1,1,22050), src=AC.createBufferSource();
+        src.buffer=b; src.connect(AC.destination); src.start(0);
+      }catch(_){}
+    }
+    ['touchend','pointerdown','keydown'].forEach(function(t){
+      document.removeEventListener(t,unlockAudio,true);
+    });
+  }
+  ['touchend','pointerdown','keydown'].forEach(function(t){
+    document.addEventListener(t,unlockAudio,true);
+  });
   var PENTA=[0,2,4,7,9];
   function sTick(i){
     i=Math.min(i,14);
@@ -341,7 +362,7 @@
   }
   function newGame(){
     playing=false;document.getElementById('play').textContent='Play';
-    api('/new?seed='+((Math.random()*4294967296)>>>0)).then(function(st){
+    api('/new?seed='+rndSeed()).then(function(st){
       render(st.cells);setStat(st);refreshMoves();
     });
   }
@@ -417,12 +438,10 @@
 
   // ---- controls ----
   var speedEl=document.getElementById('speed');
-  function delayMs(){
-    var t=+speedEl.value/100;
-    return Math.round(900-t*(900-70));
-  }
+  var SPEEDS=[900,500,300,150,70];
+  function delayMs(){return SPEEDS[+speedEl.value]}
   function speedUi(){
-    speedEl.style.setProperty('--fill',speedEl.value+'%');
+    speedEl.style.setProperty('--fill',(+speedEl.value/4*100)+'%');
     document.getElementById('speedout').textContent=delayMs()+' ms';
   }
   speedEl.oninput=speedUi; speedUi();

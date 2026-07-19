@@ -192,7 +192,11 @@
     grid[r][c]=t;
     return t;
   }
-  var rngState=(Math.random()*4294967296)>>>0;
+  function rndSeed(){
+    try{var u=new Uint32Array(1);crypto.getRandomValues(u);return u[0];}
+    catch(_){return (Math.random()*4294967296)>>>0;}
+  }
+  var rngState=rndSeed();
   function rand(){
     rngState=(rngState+0x6D2B79F5)>>>0;
     var t=rngState;
@@ -241,7 +245,7 @@
   }
   function newGame(){
     score=0; overEl.hidden=true;
-    rngState=(Math.random()*4294967296)>>>0;
+    rngState=rndSeed();
     build(freshVals()); hud(); refresh();
   }
 
@@ -358,6 +362,7 @@
   function blip(f,dt,dur,type,g){
     if(!AC||!soundOn) return;
     try{
+      if(AC.state==='suspended') AC.resume();
       var t0=AC.currentTime+(dt||0);
       var o=AC.createOscillator(), gn=AC.createGain();
       o.type=type||'sine'; o.frequency.value=f;
@@ -368,6 +373,21 @@
       o.start(t0); o.stop(t0+(dur||.08)+.02);
     }catch(_){}
   }
+  function unlockAudio(){
+    initAudio();
+    if(AC){
+      try{
+        var b=AC.createBuffer(1,1,22050), src=AC.createBufferSource();
+        src.buffer=b; src.connect(AC.destination); src.start(0);
+      }catch(_){}
+    }
+    ['touchend','pointerdown','keydown'].forEach(function(t){
+      document.removeEventListener(t,unlockAudio,true);
+    });
+  }
+  ['touchend','pointerdown','keydown'].forEach(function(t){
+    document.addEventListener(t,unlockAudio,true);
+  });
   var PENTA=[0,2,4,7,9];
   function sTick(i){
     i=Math.min(i,14);
