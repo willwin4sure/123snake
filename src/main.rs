@@ -178,6 +178,8 @@ fn cmd_serve(args: &[String]) {
                         let sum = b.cells[path[0] as usize] * path.len() as u64;
                         history.push(b.clone());
                         let mv = integer_snake::game::Move { path: path.clone() };
+                        let codes = net.encode(&b.cells);
+                        let av = sum as f64 + net.value(&net.afterstate(&codes, &mv, sum));
                         b.apply(&mv);
                         let v = net.greedy(b).map(|(_, r, a)| r + net.value(&a));
                         let st = state_json(b, v, history.len());
@@ -185,7 +187,7 @@ fn cmd_serve(args: &[String]) {
                         (
                             "application/json",
                             format!(
-                                "{{\"path\":[{}],\"sum\":{sum},{}",
+                                "{{\"path\":[{}],\"sum\":{sum},\"av\":{av:.1},{}",
                                 pc.join(","),
                                 st.trim_start_matches('{')
                             ),
@@ -207,7 +209,8 @@ fn cmd_serve(args: &[String]) {
             },
             "/step" => match &mut game {
                 Some(b) if b.has_moves() => {
-                    let (mv, _, _) = net.greedy(b).expect("moves exist");
+                    let (mv, r, after) = net.greedy(b).expect("moves exist");
+                    let av = r + net.value(&after);
                     let sum = b.cells[mv.path[0] as usize] * mv.path.len() as u64;
                     let path_cells: Vec<String> = mv.path.iter().map(|c| c.to_string()).collect();
                     history.push(b.clone());
@@ -217,7 +220,7 @@ fn cmd_serve(args: &[String]) {
                     (
                         "application/json",
                         format!(
-                            "{{\"path\":[{}],\"sum\":{sum},{}",
+                            "{{\"path\":[{}],\"sum\":{sum},\"av\":{av:.1},{}",
                             path_cells.join(","),
                             st.trim_start_matches('{')
                         ),

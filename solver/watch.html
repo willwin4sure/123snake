@@ -32,6 +32,15 @@
   .stat .lbl{display:block;font-size:10.5px;font-weight:700;text-transform:uppercase;
     letter-spacing:.09em;color:var(--muted);}
   .stat b{font-size:20px;font-variant-numeric:tabular-nums;}
+  .deltas{display:flex;gap:8px;justify-content:center;margin:0 0 12px;}
+  .dpill{display:inline-flex;align-items:center;gap:6px;background:var(--card);
+    border:1px solid var(--line);border-radius:99px;padding:4px 13px;
+    font-variant-numeric:tabular-nums;}
+  .dpill .lbl{font-size:10px;font-weight:700;text-transform:uppercase;
+    letter-spacing:.08em;color:var(--muted);}
+  .dpill b{font-size:14px;min-width:3.2em;text-align:right;transition:color .2s;}
+  .dpill b.pos{color:#31A45C;}
+  .dpill b.neg{color:#D9544D;}
   #board{position:relative;width:min(88vw,424px);aspect-ratio:1;margin:0 auto;
     background:var(--well);border-radius:18px;touch-action:none;user-select:none;
     -webkit-user-select:none;-webkit-touch-callout:none;overflow:visible;}
@@ -124,8 +133,13 @@
     <div class="stats">
       <div class="stat"><span class="lbl">Score</span><b id="score">0</b></div>
       <div class="stat"><span class="lbl">V left</span><b id="vpred">–</b></div>
+      <div class="stat"><span class="lbl">Pace</span><b id="pace">–</b></div>
     </div>
   </header>
+  <div class="deltas">
+    <span class="dpill" id="dmove"><span class="lbl">move</span><b>–</b></span>
+    <span class="dpill" id="dluck"><span class="lbl">luck</span><b>–</b></span>
+  </div>
   <div id="board">
     <div id="over" hidden>
       <h2>No moves left</h2>
@@ -379,9 +393,19 @@
 
   // ---- server API ----
   function api(p){return fetch(p).then(function(r){return r.json()})}
+  var prevV=null;
+  function setDelta(id,val){
+    var b=document.querySelector('#'+id+' b');
+    if(val==null){b.textContent='–';b.className='';return;}
+    var r=Math.round(val);
+    b.textContent=(r>0?'+':'')+r;
+    b.className=r>1?'pos':r<-1?'neg':'';
+  }
   function setStat(st){
     document.getElementById('score').textContent=st.score;
     document.getElementById('vpred').textContent=st.v==null?'–':Math.round(st.v);
+    document.getElementById('pace').textContent=
+      st.v==null?st.score:Math.round(st.score+st.v);
     document.getElementById('undo').disabled=!st.hist;
     if(st.over&&!over){
       over=true; playing=false;
@@ -415,6 +439,13 @@
     });
   }
   function applyResult(r){
+    // pace decomposition: action = chosen move value vs best available;
+    // luck = how refills landed vs the afterstate's built-in expectation
+    if(prevV!=null&&r.av!=null){
+      setDelta('dmove',r.av-prevV);
+      setDelta('dluck',r.sum+(r.v==null?0:r.v)-r.av);
+    }
+    prevV=r.v;
     return animateMove(r).then(function(){
       setStat(r);
       return refreshMoves();
@@ -423,6 +454,7 @@
   function newGame(){
     playing=false;document.getElementById('play').textContent='Play';
     api('/new?seed='+rndSeed()).then(function(st){
+      prevV=st.v;setDelta('dmove',null);setDelta('dluck',null);
       buildBoard(st.cells);setStat(st);refreshMoves();
     });
   }
@@ -539,6 +571,7 @@
     playing=false;document.getElementById('play').textContent='Play';
     api('/undo').then(function(st){
       if(st.err)return;
+      prevV=st.v;setDelta('dmove',null);setDelta('dluck',null);
       sPop();buildBoard(st.cells);setStat(st);refreshMoves();
     });
   };
