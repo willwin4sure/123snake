@@ -12,6 +12,7 @@
 pub mod eval;
 pub mod game;
 pub mod heuristics;
+pub mod ntuple;
 pub mod search;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_api;

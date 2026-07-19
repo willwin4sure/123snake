@@ -24,10 +24,99 @@ fn main() {
         "tune" => cmd_tune(&args),
         "calibrate" => cmd_calibrate(&args),
         "dump" => cmd_dump(&args),
+        "ntuple" => cmd_ntuple(&args),
         other => {
-            eprintln!("unknown command '{other}' (expected: eval, play, tune, calibrate, dump)");
+            eprintln!(
+                "unknown command '{other}' (expected: eval, play, tune, calibrate, dump, ntuple)"
+            );
             std::process::exit(2);
         }
+    }
+}
+
+/// Afterstate TD(0) + TC self-play training for the n-tuple value network.
+///
+///   snake ntuple [--games 100000] [--alpha 1.0] [--seed0 0] [--no-2x3]
+///                [--eval-every 5000] [--eval-games 100] [--eval-seed0 500000]
+///                [--save ml/ntuple-v0.bin] [--load file]
+fn cmd_ntuple(args: &[String]) {
+    use integer_snake::ntuple::{eval_greedy, train_game, NTupleNet};
+    let games: u32 = arg_val(args, "--games")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(100_000);
+    let alpha: f32 = arg_val(args, "--alpha")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1.0);
+    let seed0: u32 = arg_val(args, "--seed0")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let eval_every: u32 = arg_val(args, "--eval-every")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5000);
+    let eval_games: u32 = arg_val(args, "--eval-games")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(100);
+    let eval_seed0: u32 = arg_val(args, "--eval-seed0")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(500_000);
+    let save = arg_val(args, "--save");
+    let with_2x3 = !args.iter().any(|a| a == "--no-2x3");
+    let mut net = match arg_val(args, "--load") {
+        Some(p) => NTupleNet::load(&p, alpha).expect("load net"),
+        None => NTupleNet::new(alpha, with_2x3),
+    };
+    eprintln!(
+        "ntuple: {} games, {} images over {} tables, {} params, alpha {}, 2x3 {}",
+        games,
+        net.n_images(),
+        net.n_tables(),
+        net.params(),
+        alpha,
+        net.with_2x3
+    );
+    if games == 0 {
+        // eval-only: percentiles over the eval block
+        let mut sc = integer_snake::ntuple::eval_scores(&net, eval_seed0, eval_games);
+        sc.sort_unstable();
+        let pct = |p: f64| sc[((sc.len() - 1) as f64 * p) as usize];
+        println!(
+            "eval n={} seed0={}  mean {:.1}  p10 {}  p50 {}  p90 {}  p99 {}  max {}",
+            sc.len(),
+            eval_seed0,
+            sc.iter().sum::<u64>() as f64 / sc.len() as f64,
+            pct(0.10),
+            pct(0.50),
+            pct(0.90),
+            pct(0.99),
+            sc[sc.len() - 1]
+        );
+        return;
+    }
+    let t0 = std::time::Instant::now();
+    let mut window: (u64, u64) = (0, 0); // (games, score) since last report
+    for g in 0..games {
+        let (score, _) = train_game(&mut net, seed0.wrapping_add(g));
+        window.0 += 1;
+        window.1 += score;
+        if (g + 1) % eval_every == 0 {
+            let ev = eval_greedy(&net, eval_seed0, eval_games);
+            println!(
+                "game {:>7}  train-mean {:>6.1}  eval-greedy {:>6.1}  nonzero {:>9}  {:>5.0}s",
+                g + 1,
+                window.1 as f64 / window.0 as f64,
+                ev,
+                net.nonzero(),
+                t0.elapsed().as_secs_f64()
+            );
+            window = (0, 0);
+            if let Some(p) = &save {
+                net.save(p).expect("save net");
+            }
+        }
+    }
+    if let Some(p) = &save {
+        net.save(p).expect("save net");
+        eprintln!("saved {p}");
     }
 }
 
