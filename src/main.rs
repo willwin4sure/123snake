@@ -233,6 +233,7 @@ fn cmd_dump(args: &[String]) {
 /// Each visited state contributes (features, actual remaining score); the fit
 /// is validated on a held-out block of episodes and printed as a Rust literal
 /// ready to paste in as a CalVal preset.
+#[allow(clippy::needless_range_loop)]
 fn cmd_calibrate(args: &[String]) {
     let n: usize = arg_val(args, "--n")
         .and_then(|v| v.parse().ok())

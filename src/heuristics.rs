@@ -789,6 +789,7 @@ pub const FEATURE_NAMES: [&str; N_FEATURES] = [
 /// regression fits one coefficient per entry (plus a bias). Everything the
 /// hand value function uses appears here unsigned, so the data decides signs
 /// and magnitudes.
+#[allow(clippy::needless_range_loop)]
 pub fn features(b: &Board) -> [f64; N_FEATURES] {
     let mut f = [0.0f64; N_FEATURES];
     // tile class masses and per-value counts

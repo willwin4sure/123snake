@@ -20,8 +20,8 @@ pub struct CalVal {
 pub fn evaluate_calibrated(b: &Board, cal: &CalVal) -> f64 {
     let f = features(b);
     let mut pred = cal.beta0;
-    for i in 0..N_FEATURES {
-        pred += cal.betas[i] * f[i];
+    for (beta, feat) in cal.betas.iter().zip(f.iter()) {
+        pred += beta * feat;
     }
     b.score as f64 + pred
 }
