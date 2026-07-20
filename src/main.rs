@@ -307,6 +307,7 @@ fn cmd_ntuple(args: &[String]) {
         staircase: args.iter().any(|a| a == "--staircase"),
         diagonals: args.iter().any(|a| a == "--diagonals"),
         global: args.iter().any(|a| a == "--global"),
+        global2: args.iter().any(|a| a == "--global2"),
         stages: arg_val(args, "--stages")
             .and_then(|v| v.parse().ok())
             .unwrap_or(1),
@@ -327,6 +328,14 @@ fn cmd_ntuple(args: &[String]) {
         Some(p) => NTupleNet::load(&p, alpha).expect("load net"),
         None => NTupleNet::new(alpha, cfg),
     };
+    if let Some(v0) = arg_val(args, "--optimism").and_then(|v| v.parse::<f32>().ok()) {
+        net.init_optimistic(v0);
+        eprintln!("optimistic init: V0 = {v0}");
+    }
+    if args.iter().any(|a| a == "--promote") {
+        net.promote = true;
+        eprintln!("stage promotion enabled");
+    }
     eprintln!(
         "ntuple: {} games, {} images over {} tables, {} params, alpha {}, cfg {:?}",
         games,

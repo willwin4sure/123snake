@@ -117,6 +117,9 @@ pub struct NetConfig {
     /// (a) symmetry-canonical positions of the two largest tiles (625
     /// entries), (b) big-tile dispersion bucket x max-tile tier (160).
     pub global: bool,
+    /// Gated global tables: top-2 pair and top-3 triple positions, active
+    /// only when the tiles are genuinely big (mag >= 24); plus dispersion.
+    pub global2: bool,
     /// Weight-set count for multi-stage learning (Jaskowski 2017): 1 or 3.
     /// With 3, the stage is keyed by the board's max tile (<96, <768, >=768)
     /// and every table is replicated per stage.
@@ -132,6 +135,7 @@ impl NetConfig {
             staircase: false,
             diagonals: false,
             global: false,
+            global2: false,
             stages: 1,
         }
     }
@@ -186,7 +190,8 @@ fn dihedral(r: usize, c: usize, t: usize) -> (usize, usize) {
 const SAVE_MAGIC_V2: u32 = 0x4E54_5632; // "NTV2"
 const SAVE_MAGIC_V3: u32 = 0x4E54_5633; // "NTV3": adds the diagonals flag
 const SAVE_MAGIC_V4: u32 = 0x4E54_5634; // "NTV4": adds the global flag
-const SAVE_MAGIC: u32 = 0x4E54_5635; // "NTV5": adds the stage count
+const SAVE_MAGIC_V5: u32 = 0x4E54_5635; // "NTV5": adds the stage count
+const SAVE_MAGIC: u32 = 0x4E54_5636; // "NTV6": adds the global2 flag
 
 /// Approximate magnitude of a cell code, for ranking "largest tiles" in the
 /// global features. Exact on spawns and the ladder (which dominates big
@@ -225,6 +230,9 @@ pub struct NTupleNet {
     n_globals: usize,
     /// Tables per stage; stage s uses tables[s*ntab_stage..(s+1)*ntab_stage].
     ntab_stage: usize,
+    /// Whether promotion enabled and which stages have been initialized.
+    pub promote: bool,
+    stage_ready: Vec<bool>,
     /// Dihedral index permutations: perms[t][i] = image of cell i.
     perms: Vec<[u8; CELLS]>,
 }
@@ -324,7 +332,13 @@ impl NTupleNet {
         if cfg.global {
             tables.push(Lut::new(CELLS * CELLS)); // top-2 positions, canonical
             tables.push(Lut::new(20 * 8)); // dispersion bucket x max tier
-            n_globals = 2;
+            n_globals += 2;
+        }
+        if cfg.global2 {
+            tables.push(Lut::new(CELLS * CELLS + 1)); // gated top-2 (+inactive)
+            tables.push(Lut::new(CELLS * CELLS * CELLS + 1)); // gated top-3
+            tables.push(Lut::new(20 * 8)); // dispersion bucket x max tier
+            n_globals += 3;
         }
         // multi-stage: replicate the whole per-stage table set
         let ntab_stage = tables.len();
@@ -347,6 +361,8 @@ impl NTupleNet {
                 p
             })
             .collect();
+        let mut stage_ready = vec![false; cfg.stages];
+        stage_ready[0] = true;
         NTupleNet {
             tables,
             images,
@@ -355,6 +371,8 @@ impl NTupleNet {
             m,
             n_globals,
             ntab_stage,
+            promote: false,
+            stage_ready,
             perms,
         }
     }
@@ -384,36 +402,38 @@ impl NTupleNet {
         i
     }
 
-    /// Indices into the two global tables for this board encoding. Both are
-    /// exactly dihedral-invariant: the top-2 pair is selected per transform
-    /// (so tie-breaks agree), and dispersion sums over all big tiles.
-    fn global_indices(&self, codes: &[u8; CELLS]) -> [usize; 2] {
-        let a = self.cfg.alphabet;
-        let mags: Vec<u32> = codes.iter().map(|&c| code_mag(c, a)).collect();
-        // canonical ordered top-2 pair: run the same index-order tie-break on
-        // every transformed board, take the minimal encoding
-        let mut g1 = usize::MAX;
+    /// Canonical top-k positions: for each dihedral transform, select the
+    /// top-k cells by magnitude with index-order tie-breaks on the
+    /// transformed board, encode base-25, take the minimum. Exactly
+    /// dihedral-invariant.
+    fn canonical_topk(&self, mags: &[u32], k: usize) -> usize {
+        let mut best = usize::MAX;
         for p in &self.perms {
             let mut inv = [0usize; CELLS];
             for (i, &pi) in p.iter().enumerate() {
                 inv[pi as usize] = i;
             }
-            let (mut p1, mut p2, mut m1, mut m2) = (0usize, 0usize, 0u32, 0u32);
+            let mut top: [(u32, usize); 3] = [(0, 0); 3];
             for (j, &src) in inv.iter().enumerate() {
                 let mg = mags[src];
-                if mg > m1 {
-                    p2 = p1;
-                    m2 = m1;
-                    p1 = j;
-                    m1 = mg;
-                } else if mg > m2 {
-                    p2 = j;
-                    m2 = mg;
+                let mut m = (mg, j);
+                for slot in top.iter_mut().take(k) {
+                    if m.0 > slot.0 {
+                        std::mem::swap(&mut m, slot);
+                    }
                 }
             }
-            g1 = g1.min(p1 * CELLS + p2);
+            let mut enc = 0usize;
+            for slot in top.iter().take(k) {
+                enc = enc * CELLS + slot.1;
+            }
+            best = best.min(enc);
         }
-        // dispersion: pairwise Manhattan distance over ALL tiles >= 48
+        best
+    }
+
+    fn dispersion_index(mags: &[u32]) -> usize {
+        // pairwise Manhattan distance over ALL tiles >= 48, x max tier
         let big: Vec<usize> = (0..CELLS).filter(|&i| mags[i] >= 48).collect();
         let mut disp = 0usize;
         for i in 0..big.len() {
@@ -425,8 +445,38 @@ impl NTupleNet {
         }
         let maxmag = *mags.iter().max().unwrap_or(&1);
         let tier = (32 - (maxmag.max(3) / 3).leading_zeros()).min(7) as usize;
-        let g2 = disp.min(19) * 8 + tier;
-        [g1, g2]
+        disp.min(19) * 8 + tier
+    }
+
+    /// Indices into the active global tables, in table order.
+    fn global_indices(&self, codes: &[u8; CELLS]) -> ([usize; 5], usize) {
+        let a = self.cfg.alphabet;
+        let mags: Vec<u32> = codes.iter().map(|&c| code_mag(c, a)).collect();
+        let mut out = [0usize; 5];
+        let mut n = 0;
+        if self.cfg.global {
+            out[n] = self.canonical_topk(&mags, 2);
+            out[n + 1] = Self::dispersion_index(&mags);
+            n += 2;
+        }
+        if self.cfg.global2 {
+            // sizes of the top three tiles (unsorted scan is fine for gates)
+            let mut sorted = mags.clone();
+            sorted.sort_unstable_by(|x, y| y.cmp(x));
+            out[n] = if sorted[1] >= 24 {
+                self.canonical_topk(&mags, 2)
+            } else {
+                CELLS * CELLS // inactive
+            };
+            out[n + 1] = if sorted[2] >= 24 {
+                self.canonical_topk(&mags, 3)
+            } else {
+                CELLS * CELLS * CELLS // inactive
+            };
+            out[n + 2] = Self::dispersion_index(&mags);
+            n += 3;
+        }
+        (out, n)
     }
 
     pub fn encode(&self, cells: &[u64; CELLS]) -> [u8; CELLS] {
@@ -444,9 +494,9 @@ impl NTupleNet {
             v += self.tables[off + img.table].w[self.index(img, codes)] as f64;
         }
         if self.n_globals > 0 {
-            let g = self.global_indices(codes);
+            let (g, n) = self.global_indices(codes);
             let base = off + self.ntab_stage - self.n_globals;
-            for (k, &gi) in g.iter().enumerate() {
+            for (k, &gi) in g.iter().take(n).enumerate() {
                 v += self.tables[base + k].w[gi] as f64;
             }
         }
@@ -473,7 +523,11 @@ impl NTupleNet {
             t.e[i] += delta;
             t.a[i] += delta.abs();
         }
-        let off = self.stage_of(codes) * self.ntab_stage;
+        let stage = self.stage_of(codes);
+        if self.promote {
+            self.promote_stage(stage);
+        }
+        let off = stage * self.ntab_stage;
         let per = self.alpha * delta / (self.images.len() + self.n_globals) as f32;
         for k in 0..self.images.len() {
             let i = {
@@ -483,9 +537,9 @@ impl NTupleNet {
             bump(&mut self.tables[off + self.images[k].table], i, per, delta);
         }
         if self.n_globals > 0 {
-            let g = self.global_indices(codes);
+            let (g, n) = self.global_indices(codes);
             let base = off + self.ntab_stage - self.n_globals;
-            for (k, &gi) in g.iter().enumerate() {
+            for (k, &gi) in g.iter().take(n).enumerate() {
                 bump(&mut self.tables[base + k], gi, per, delta);
             }
         }
@@ -500,6 +554,35 @@ impl NTupleNet {
         }
         a[mv.head()] = self.cfg.alphabet.encode(sum);
         a
+    }
+
+    /// Optimistic initialization (Guei & Wu's OTD): fill every weight so an
+    /// untouched board evaluates to `v0`. Visited entries correct quickly
+    /// (TC starts them at full rate); unvisited ones stay attractive, which
+    /// drives systematic exploration of untried moves. Training-time only -
+    /// the optimism is baked into the weights, so checkpoints round-trip.
+    pub fn init_optimistic(&mut self, v0: f32) {
+        let per = v0 / (self.images.len() + self.n_globals) as f32;
+        for t in &mut self.tables {
+            t.w.fill(per);
+        }
+    }
+
+    /// Multi-stage weight promotion (Jaskowski 2017): the first time training
+    /// touches a stage, copy the previous stage's tables into it so it
+    /// refines instead of relearning from zero.
+    fn promote_stage(&mut self, stage: usize) {
+        if stage == 0 || self.stage_ready[stage] {
+            return;
+        }
+        self.promote_stage(stage - 1);
+        for t in 0..self.ntab_stage {
+            let (lo, hi) = self.tables.split_at_mut(stage * self.ntab_stage + t);
+            let src = &lo[(stage - 1) * self.ntab_stage + t];
+            let dst = &mut hi[0];
+            dst.w.copy_from_slice(&src.w);
+        }
+        self.stage_ready[stage] = true;
     }
 
     pub fn params(&self) -> usize {
@@ -535,6 +618,7 @@ impl NTupleNet {
         wr.write_all(&u32::from(self.cfg.staircase).to_le_bytes())?;
         wr.write_all(&u32::from(self.cfg.diagonals).to_le_bytes())?;
         wr.write_all(&u32::from(self.cfg.global).to_le_bytes())?;
+        wr.write_all(&u32::from(self.cfg.global2).to_le_bytes())?;
         wr.write_all(&(self.cfg.stages as u32).to_le_bytes())?;
         wr.write_all(&(self.tables.len() as u32).to_le_bytes())?;
         for t in &self.tables {
@@ -555,6 +639,7 @@ impl NTupleNet {
         rd.read_exact(&mut b4)?;
         let first = u32::from_le_bytes(b4);
         let (cfg, ntab) = if first == SAVE_MAGIC
+            || first == SAVE_MAGIC_V5
             || first == SAVE_MAGIC_V4
             || first == SAVE_MAGIC_V3
             || first == SAVE_MAGIC_V2
@@ -576,12 +661,17 @@ impl NTupleNet {
             } else {
                 word()? != 0
             };
-            let global = if first == SAVE_MAGIC || first == SAVE_MAGIC_V4 {
+            let global = if first >= SAVE_MAGIC_V4 {
                 word()? != 0
             } else {
                 false
             };
-            let stages = if first == SAVE_MAGIC {
+            let global2 = if first >= SAVE_MAGIC {
+                word()? != 0
+            } else {
+                false
+            };
+            let stages = if first >= SAVE_MAGIC_V5 {
                 word()? as usize
             } else {
                 1
@@ -595,6 +685,7 @@ impl NTupleNet {
                     staircase,
                     diagonals,
                     global,
+                    global2,
                     stages,
                 },
                 ntab,
@@ -941,6 +1032,7 @@ mod tests {
         cfg.staircase = true;
         cfg.diagonals = true;
         cfg.global = true;
+        cfg.global2 = true;
         let mut net = NTupleNet::new(1.0, cfg);
         let b = Board::new_game(3);
         let codes = net.encode(&b.cells);
