@@ -585,6 +585,13 @@ impl NTupleNet {
         self.stage_ready[stage] = true;
     }
 
+    /// (weight, |error| mass) rows of the ungated top-2 position table.
+    pub fn global_pair_table(&self) -> Vec<(f32, f32)> {
+        assert!(self.cfg.global, "net has no --global tables");
+        let t = &self.tables[self.ntab_stage - self.n_globals];
+        t.w.iter().zip(t.a.iter()).map(|(&w, &a)| (w, a)).collect()
+    }
+
     pub fn params(&self) -> usize {
         self.tables.iter().map(|t| t.w.len()).sum()
     }

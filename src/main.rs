@@ -59,16 +59,16 @@ fn cmd_serve(args: &[String]) {
     // unbiased action value: V(afterstate) is only trained on-policy and
     // underestimates off-policy moves, so score a chosen move by sampling
     // refills and taking the mean best-reply value
-    fn sampled_av(
+    fn sampled_av_n(
         net: &integer_snake::ntuple::NTupleNet,
         b: &Board,
         mv: &integer_snake::game::Move,
         sum: u64,
         rng: &mut Mulberry32,
+        s: u32,
     ) -> f64 {
-        const S: u32 = 24;
         let mut acc = 0.0;
-        for _ in 0..S {
+        for _ in 0..s {
             let refills: Vec<u64> = (0..mv.path.len() - 1).map(|_| rng.rnd13()).collect();
             let child = b.apply_with_refills(mv, &refills);
             acc += sum as f64
@@ -77,7 +77,16 @@ fn cmd_serve(args: &[String]) {
                     .map(|(_, r, a)| r + net.value(&a))
                     .unwrap_or(0.0);
         }
-        acc / S as f64
+        acc / s as f64
+    }
+    fn sampled_av(
+        net: &integer_snake::ntuple::NTupleNet,
+        b: &Board,
+        mv: &integer_snake::game::Move,
+        sum: u64,
+        rng: &mut Mulberry32,
+    ) -> f64 {
+        sampled_av_n(net, b, mv, sum, rng, 24)
     }
     let listener = TcpListener::bind(("127.0.0.1", port)).expect("bind");
 
@@ -240,9 +249,41 @@ fn cmd_serve(args: &[String]) {
             },
             "/step" => match &mut game {
                 Some(b) if b.has_moves() => {
-                    let (mv, _, _) = net.greedy(b).expect("moves exist");
+                    // search mode: rank by the one-ply proxy, then pick the
+                    // best of the top 16 by 48-sample expectimax (the
+                    // measured test-time-compute sweet spot, +35%)
+                    let (mv, av) = if query.contains("search=1") {
+                        let codes = net.encode(&b.cells);
+                        let mut scored: Vec<(integer_snake::game::Move, u64, f64)> = b
+                            .legal_moves_capped(integer_snake::game::MOVE_CAP)
+                            .into_iter()
+                            .map(|mv| {
+                                let sum = b.cells[mv.path[0] as usize] * mv.path.len() as u64;
+                                let v = sum as f64 + net.value(&net.afterstate(&codes, &mv, sum));
+                                (mv, sum, v)
+                            })
+                            .collect();
+                        scored.sort_by(|x, y| {
+                            y.2.partial_cmp(&x.2).unwrap_or(std::cmp::Ordering::Equal)
+                        });
+                        scored.truncate(16);
+                        scored
+                            .into_iter()
+                            .map(|(mv, sum, _)| {
+                                let v = sampled_av_n(&net, b, &mv, sum, &mut srng, 48);
+                                (mv, v)
+                            })
+                            .max_by(|x, y| {
+                                x.1.partial_cmp(&y.1).unwrap_or(std::cmp::Ordering::Equal)
+                            })
+                            .expect("moves exist")
+                    } else {
+                        let (mv, _, _) = net.greedy(b).expect("moves exist");
+                        let sum = b.cells[mv.path[0] as usize] * mv.path.len() as u64;
+                        let av = sampled_av(&net, b, &mv, sum, &mut srng);
+                        (mv, av)
+                    };
                     let sum = b.cells[mv.path[0] as usize] * mv.path.len() as u64;
-                    let av = sampled_av(&net, b, &mv, sum, &mut srng);
                     let base = av; // the bot plays its own baseline
                     let path_cells: Vec<String> = mv.path.iter().map(|c| c.to_string()).collect();
                     history.push(b.clone());
@@ -345,6 +386,38 @@ fn cmd_ntuple(args: &[String]) {
         alpha,
         net.cfg
     );
+    if args.iter().any(|a| a == "--show-global") {
+        // decode the learned top-2 position table: which big-tile pair
+        // geometries the net values most and least (canonical entries only)
+        let rows = net.global_pair_table();
+        let mut seen: Vec<(usize, f32, f32)> = rows
+            .iter()
+            .enumerate()
+            .filter(|(_, (w, _))| *w != 0.0)
+            .map(|(i, (w, a))| (i, *w, *a))
+            .collect();
+        seen.sort_by(|x, y| y.1.partial_cmp(&x.1).unwrap());
+        let show = |list: &[(usize, f32, f32)]| {
+            for (i, w, a) in list {
+                let (p1, p2) = (i / 25, i % 25);
+                println!(
+                    "  top1 at r{}c{}, top2 at r{}c{}: w {:>+9.1}  (|err| mass {:.0})",
+                    p1 / 5,
+                    p1 % 5,
+                    p2 / 5,
+                    p2 % 5,
+                    w,
+                    a
+                );
+            }
+        };
+        println!("highest-valued pair geometries:");
+        show(&seen[..seen.len().min(10)]);
+        println!("lowest-valued pair geometries:");
+        let lo = &seen[seen.len().saturating_sub(10)..];
+        show(lo);
+        return;
+    }
     if let Some(spec) = arg_val(args, "--probe") {
         // calibration probe: for states along greedy play, compare each
         // ranked move's claimed value av = r + V(afterstate) against the

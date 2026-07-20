@@ -85,6 +85,7 @@
   button:disabled{opacity:.4;cursor:default;border-color:var(--line);}
   #play{min-width:5.4em;}
   #mute{min-width:7.8em;}
+  #botmode{min-width:8.6em;}
   .speed{display:flex;align-items:center;gap:9px;background:var(--card);
     border:1px solid var(--line);border-radius:12px;padding:7px 14px;}
   .speed .lbl{font-size:10.5px;font-weight:700;text-transform:uppercase;
@@ -152,6 +153,7 @@
     <button id="step">Step</button>
     <button id="play">Play</button>
     <button id="undo">Undo</button>
+    <button id="botmode">Bot: greedy</button>
     <button id="mute">Sound: on</button>
     <div class="speed">
       <span class="lbl">Speed</span>
@@ -460,7 +462,7 @@
   }
   function step(){
     if(over||busy)return Promise.resolve(false);
-    return api('/step').then(function(r){
+    return api(searchMode?'/step?search=1':'/step').then(function(r){
       if(r.done)return false;
       highlight(r.path,false);
       var pause=Math.max(90,delayMs()*.45);
@@ -539,6 +541,15 @@
   });
 
   // ---- controls ----
+  var searchMode=localStorage.getItem('snakeLabSearch')==='on';
+  var botBtn=document.getElementById('botmode');
+  function botLabel(){botBtn.textContent=searchMode?'Bot: 16\u00d748':'Bot: greedy'}
+  botLabel();
+  botBtn.onclick=function(){
+    searchMode=!searchMode;
+    localStorage.setItem('snakeLabSearch',searchMode?'on':'off');
+    botLabel();
+  };
   var speedEl=document.getElementById('speed');
   var SPEEDS=[900,500,300,150,70];
   function delayMs(){return SPEEDS[+speedEl.value]}
