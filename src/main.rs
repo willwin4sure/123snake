@@ -337,6 +337,12 @@ fn cmd_ntuple(args: &[String]) {
         .and_then(|v| v.parse().ok())
         .unwrap_or(500_000);
     let save = arg_val(args, "--save");
+    let stage_thresholds: [u32; 2] = arg_val(args, "--stage-thresholds")
+        .and_then(|v| {
+            let (a, b) = v.split_once(':')?;
+            Some([a.parse().ok()?, b.parse().ok()?])
+        })
+        .unwrap_or([96, 768]);
     let cfg = integer_snake::ntuple::NetConfig {
         alphabet: if arg_val(args, "--alphabet").as_deref() == Some("fine") {
             integer_snake::ntuple::Alphabet::Fine
@@ -354,6 +360,7 @@ fn cmd_ntuple(args: &[String]) {
         stages: arg_val(args, "--stages")
             .and_then(|v| v.parse().ok())
             .unwrap_or(1),
+        stage_thresholds,
     };
     let lambda: f32 = arg_val(args, "--lambda")
         .and_then(|v| v.parse().ok())
@@ -367,6 +374,7 @@ fn cmd_ntuple(args: &[String]) {
     let adapt_stages: f64 = arg_val(args, "--adapt-stages")
         .and_then(|v| v.parse().ok())
         .unwrap_or(0.0);
+
     let grow: Vec<String> = arg_val(args, "--grow")
         .map(|v| v.split(',').map(str::to_string).collect())
         .unwrap_or_default();
@@ -564,14 +572,15 @@ fn cmd_ntuple(args: &[String]) {
                 eps_rand,
             )
         };
-        if adapt_stages > 0.0 && net.stage_cap + 1 < net.cfg.stages {
-            reach.push_front((maxt >= 96, maxt >= 768));
+        if net.cfg.stages > 1 {
+            let [t1, t2] = net.cfg.stage_thresholds;
+            reach.push_front((maxt >= t1 as u64, maxt >= t2 as u64));
             reach.truncate(5000);
-            if reach.len() == 5000 {
-                let thr = if net.stage_cap == 0 { 96 } else { 768 };
+            if adapt_stages > 0.0 && net.stage_cap + 1 < net.cfg.stages && reach.len() == 5000 {
+                let first = net.stage_cap == 0;
                 let frac = reach
                     .iter()
-                    .filter(|r| if thr == 96 { r.0 } else { r.1 })
+                    .filter(|r| if first { r.0 } else { r.1 })
                     .count() as f64
                     / 5000.0;
                 if frac >= adapt_stages {
@@ -583,7 +592,6 @@ fn cmd_ntuple(args: &[String]) {
                         s,
                         frac
                     );
-                    reach.clear();
                 }
             }
         }
@@ -637,6 +645,12 @@ fn cmd_ntuple(args: &[String]) {
                     net.nonzero(),
                     t0.elapsed().as_secs_f64()
                 );
+            }
+            if net.cfg.stages > 1 && !reach.is_empty() {
+                let n = reach.len() as f64;
+                let f1 = reach.iter().filter(|r| r.0).count() as f64 / n;
+                let f2 = reach.iter().filter(|r| r.1).count() as f64 / n;
+                println!("game {:>7}  gatefrac {:.3} {:.3}", g + 1, f1, f2);
             }
             window = (0, 0);
             if let Some(p) = &save {

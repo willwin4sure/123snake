@@ -146,9 +146,11 @@ pub struct NetConfig {
     /// only when the tiles are genuinely big (mag >= 24); plus dispersion.
     pub global2: bool,
     /// Weight-set count for multi-stage learning (Jaskowski 2017): 1 or 3.
-    /// With 3, the stage is keyed by the board's max tile (<96, <768, >=768)
-    /// and every table is replicated per stage.
+    /// With 3, the stage is keyed by the board's max tile against
+    /// `stage_thresholds` and every table is replicated per stage.
     pub stages: usize,
+    /// Max-tile boundaries between stage 0/1 and stage 1/2.
+    pub stage_thresholds: [u32; 2],
 }
 
 impl NetConfig {
@@ -162,6 +164,7 @@ impl NetConfig {
             global: false,
             global2: false,
             stages: 1,
+            stage_thresholds: [96, 768],
         }
     }
 }
@@ -225,7 +228,8 @@ const SAVE_MAGIC_V2: u32 = 0x4E54_5632; // "NTV2"
 const SAVE_MAGIC_V3: u32 = 0x4E54_5633; // "NTV3": adds the diagonals flag
 const SAVE_MAGIC_V4: u32 = 0x4E54_5634; // "NTV4": adds the global flag
 const SAVE_MAGIC_V5: u32 = 0x4E54_5635; // "NTV5": adds the stage count
-const SAVE_MAGIC: u32 = 0x4E54_5636; // "NTV6": adds the global2 flag
+const SAVE_MAGIC_V6: u32 = 0x4E54_5636; // "NTV6": adds the global2 flag
+const SAVE_MAGIC: u32 = 0x4E54_5637; // "NTV7": adds stage thresholds
 
 /// Approximate magnitude of a cell code, for ranking "largest tiles" in the
 /// global features. Exact on spawns and the ladder (which dominates big
@@ -528,9 +532,10 @@ impl NTupleNet {
         }
         let a = self.cfg.alphabet;
         let mx = codes.iter().map(|&c| code_mag(c, a)).max().unwrap_or(1);
-        let raw = if mx < 96 {
+        let [t1, t2] = self.cfg.stage_thresholds;
+        let raw = if mx < t1 {
             0
-        } else if mx < 768 {
+        } else if mx < t2 {
             1
         } else {
             2
@@ -777,6 +782,8 @@ impl NTupleNet {
         wr.write_all(&u32::from(self.cfg.global).to_le_bytes())?;
         wr.write_all(&u32::from(self.cfg.global2).to_le_bytes())?;
         wr.write_all(&(self.cfg.stages as u32).to_le_bytes())?;
+        wr.write_all(&self.cfg.stage_thresholds[0].to_le_bytes())?;
+        wr.write_all(&self.cfg.stage_thresholds[1].to_le_bytes())?;
         wr.write_all(&(self.tables.len() as u32).to_le_bytes())?;
         for t in &self.tables {
             wr.write_all(&(t.w.len() as u64).to_le_bytes())?;
@@ -796,6 +803,7 @@ impl NTupleNet {
         rd.read_exact(&mut b4)?;
         let first = u32::from_le_bytes(b4);
         let (cfg, ntab) = if first == SAVE_MAGIC
+            || first == SAVE_MAGIC_V6
             || first == SAVE_MAGIC_V5
             || first == SAVE_MAGIC_V4
             || first == SAVE_MAGIC_V3
@@ -833,6 +841,11 @@ impl NTupleNet {
             } else {
                 1
             };
+            let stage_thresholds = if first >= SAVE_MAGIC {
+                [word()?, word()?]
+            } else {
+                [96, 768]
+            };
             let ntab = word()? as usize;
             (
                 NetConfig {
@@ -844,6 +857,7 @@ impl NTupleNet {
                     global,
                     global2,
                     stages,
+                    stage_thresholds,
                 },
                 ntab,
             )
