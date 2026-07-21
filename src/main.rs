@@ -340,6 +340,8 @@ fn cmd_ntuple(args: &[String]) {
     let cfg = integer_snake::ntuple::NetConfig {
         alphabet: if arg_val(args, "--alphabet").as_deref() == Some("fine") {
             integer_snake::ntuple::Alphabet::Fine
+        } else if arg_val(args, "--grow").is_some_and(|g| g.contains("alphabet")) {
+            integer_snake::ntuple::Alphabet::Coarse
         } else {
             integer_snake::ntuple::Alphabet::Base
         },
@@ -362,6 +364,13 @@ fn cmd_ntuple(args: &[String]) {
             Some((a.parse().ok()?, b.parse().ok()?))
         })
         .unwrap_or((0.0, 0.0));
+    let adapt_stages: f64 = arg_val(args, "--adapt-stages")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.0);
+    let grow: Vec<String> = arg_val(args, "--grow")
+        .map(|v| v.split(',').map(str::to_string).collect())
+        .unwrap_or_default();
+    let start_min = args.iter().any(|a| a == "--start-min");
     let trace_len: usize = arg_val(args, "--trace")
         .and_then(|v| v.parse().ok())
         .unwrap_or(16);
@@ -369,6 +378,16 @@ fn cmd_ntuple(args: &[String]) {
         Some(p) => NTupleNet::load(&p, alpha).expect("load net"),
         None => NTupleNet::new(alpha, cfg),
     };
+    if start_min {
+        use integer_snake::ntuple::{G_ROWS, G_SQ2};
+        net.set_active_groups(&[G_ROWS, G_SQ2]);
+        eprintln!("start-min: only rows + 2x2 active");
+    }
+    if adapt_stages > 0.0 {
+        net.stage_cap = 0;
+        net.promote = true;
+        eprintln!("adaptive stages: activate at frac >= {adapt_stages}");
+    }
     if let Some(v0) = arg_val(args, "--optimism").and_then(|v| v.parse::<f32>().ok()) {
         net.init_optimistic(v0);
         eprintln!("optimistic init: V0 = {v0}");
@@ -519,8 +538,16 @@ fn cmd_ntuple(args: &[String]) {
     }
     let t0 = std::time::Instant::now();
     let mut window: (u64, u64) = (0, 0); // (games, score) since last report
+                                         // growth controller: on plateau (200k-window mean < 2% over the best so
+                                         // far), fire the next pending growth action
+    let mut grow_queue: std::collections::VecDeque<String> = grow.iter().cloned().collect();
+    let mut gwin: (u64, u64) = (0, 0);
+    let mut gbest: f64 = 0.0;
+    // adaptive staging: activate stage s when >= adapt_stages of the last
+    // 5000 games reached its max-tile threshold
+    let mut reach: std::collections::VecDeque<(bool, bool)> = Default::default();
     for g in 0..games {
-        let (score, _) = if lambda > 0.0 {
+        let (score, _, maxt) = if lambda > 0.0 {
             integer_snake::ntuple::train_game_lambda_eps(
                 &mut net,
                 seed0.wrapping_add(g),
@@ -537,6 +564,58 @@ fn cmd_ntuple(args: &[String]) {
                 eps_rand,
             )
         };
+        if adapt_stages > 0.0 && net.stage_cap + 1 < net.cfg.stages {
+            reach.push_front((maxt >= 96, maxt >= 768));
+            reach.truncate(5000);
+            if reach.len() == 5000 {
+                let thr = if net.stage_cap == 0 { 96 } else { 768 };
+                let frac = reach
+                    .iter()
+                    .filter(|r| if thr == 96 { r.0 } else { r.1 })
+                    .count() as f64
+                    / 5000.0;
+                if frac >= adapt_stages {
+                    let s = net.stage_cap + 1;
+                    net.activate_stage(s);
+                    println!(
+                        "game {:>7}  STAGE {} activated (frac {:.2})",
+                        g + 1,
+                        s,
+                        frac
+                    );
+                    reach.clear();
+                }
+            }
+        }
+        if !grow_queue.is_empty() {
+            gwin.0 += 1;
+            gwin.1 += score;
+            if gwin.0 == 200_000 {
+                let mean = gwin.1 as f64 / gwin.0 as f64;
+                if mean < gbest * 1.02 {
+                    let action = grow_queue.pop_front().unwrap();
+                    use integer_snake::ntuple::{G_BLK23, G_PLUS, G_STAIR};
+                    match action.as_str() {
+                        "plus" => net.activate_group(G_PLUS),
+                        "stair" => net.activate_group(G_STAIR),
+                        "2x3" => net.activate_group(G_BLK23),
+                        "alphabet" => net.grow_alphabet(),
+                        other => eprintln!("unknown grow action {other}"),
+                    }
+                    println!(
+                        "game {:>7}  GROW: {} (window mean {:.1} vs best {:.1})",
+                        g + 1,
+                        action,
+                        mean,
+                        gbest
+                    );
+                    gbest = 0.0;
+                } else {
+                    gbest = gbest.max(mean);
+                }
+                gwin = (0, 0);
+            }
+        }
         window.0 += 1;
         window.1 += score;
         if (g + 1) % eval_every == 0 {

@@ -76,10 +76,33 @@ pub fn encode_cell_fine(v: u64) -> u8 {
     }
 }
 
+/// Coarse starter alphabet (12 symbols) for progressive growth: exact
+/// 1/2/3/4, ladder tiers folded in pairs (6-12, 24-48, 96-192, 384-768,
+/// 1536+), one pow2 bucket, one merged trash bucket, pending.
+pub fn encode_cell_coarse(v: u64) -> u8 {
+    let f = encode_cell(v);
+    COARSE_OF_BASE[f as usize]
+}
+
+/// Base(23) code -> Coarse(12) code, also used to seed grown tables.
+pub const COARSE_OF_BASE: [u8; 23] = [
+    0, 1, 2, 3, // 1,2,3,4
+    4, 4, // 6,12
+    5, 5, // 24,48
+    6, 6, // 96,192
+    7, 7, // 384,768
+    8, 8, 8, 8, 8, 8, 8,  // 1536..98304
+    9,  // pow2
+    10, // nine
+    10, // trash
+    11, // pending
+];
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Alphabet {
     Base,
     Fine,
+    Coarse,
 }
 
 impl Alphabet {
@@ -87,6 +110,7 @@ impl Alphabet {
         match self {
             Alphabet::Base => 23,
             Alphabet::Fine => 31,
+            Alphabet::Coarse => 12,
         }
     }
     pub fn pending(self) -> u8 {
@@ -96,6 +120,7 @@ impl Alphabet {
         match self {
             Alphabet::Base => encode_cell(v),
             Alphabet::Fine => encode_cell_fine(v),
+            Alphabet::Coarse => encode_cell_coarse(v),
         }
     }
 }
@@ -166,10 +191,19 @@ impl Lut {
     }
 }
 
+/// Shape groups for progressive growth (images activate by group).
+pub const G_ROWS: u8 = 0;
+pub const G_SQ2: u8 = 1;
+pub const G_PLUS: u8 = 2;
+pub const G_STAIR: u8 = 3;
+pub const G_DIAG: u8 = 4;
+pub const G_BLK23: u8 = 5;
+
 /// A symmetric image of a base tuple: fixed cell list into a shared table.
 struct Image {
     cells: Vec<u8>,
     table: usize,
+    group: u8,
 }
 
 /// The 8 dihedral transforms of the 5x5 board.
@@ -217,6 +251,13 @@ fn code_mag(c: u8, a: Alphabet) -> u32 {
             29 => 40,
             _ => 0,
         },
+        Alphabet::Coarse => match c {
+            0..=3 => c as u32 + 1,
+            4..=8 => 12u32 << (2 * (c - 4)), // pair reps: 12,48,192,768,3072
+            9 => 16,
+            10 => 33,
+            _ => 0,
+        },
     }
 }
 
@@ -233,13 +274,21 @@ pub struct NTupleNet {
     /// Whether promotion enabled and which stages have been initialized.
     pub promote: bool,
     stage_ready: Vec<bool>,
+    /// Highest stage currently in use (adaptive staging keeps this at 0
+    /// until the trainer activates later stages).
+    pub stage_cap: usize,
+    /// Active shape groups (progressive growth flips these on).
+    active: [bool; 6],
+    n_active_images: usize,
+    /// Cells-per-tuple for each table (0 = global feature table).
+    arity: Vec<u8>,
     /// Dihedral index permutations: perms[t][i] = image of cell i.
     perms: Vec<[u8; CELLS]>,
 }
 
 impl NTupleNet {
     pub fn new(alpha: f32, cfg: NetConfig) -> Self {
-        fn add_base(images: &mut Vec<Image>, cells: &[(usize, usize)], table: usize) {
+        fn add_base(images: &mut Vec<Image>, cells: &[(usize, usize)], table: usize, group: u8) {
             for t in 0..8 {
                 let img: Vec<u8> = cells
                     .iter()
@@ -248,31 +297,39 @@ impl NTupleNet {
                         idx(rr, cc) as u8
                     })
                     .collect();
-                images.push(Image { cells: img, table });
+                images.push(Image {
+                    cells: img,
+                    table,
+                    group,
+                });
             }
         }
         let m = cfg.alphabet.size();
         let mut tables = Vec::new();
         let mut images = Vec::new();
+        let mut arity: Vec<u8> = Vec::new();
         let len5 = m.pow(5);
         let len4 = m.pow(4);
         // rows 0..3 (reflections cover rows 3,4 and all columns)
         for r in 0..3 {
             let cells: Vec<_> = (0..N).map(|c| (r, c)).collect();
             tables.push(Lut::new(len5));
-            add_base(&mut images, &cells, tables.len() - 1);
+            arity.push(5);
+            add_base(&mut images, &cells, tables.len() - 1, G_ROWS);
         }
         // 2x2 squares, anchor orbit reps
         for &(r, c) in &[(0, 0), (0, 1), (1, 1)] {
             let cells = [(r, c), (r, c + 1), (r + 1, c), (r + 1, c + 1)];
             tables.push(Lut::new(len4));
-            add_base(&mut images, &cells, tables.len() - 1);
+            arity.push(4);
+            add_base(&mut images, &cells, tables.len() - 1, G_SQ2);
         }
         // plus shapes, center orbit reps
         for &(r, c) in &[(1, 1), (1, 2), (2, 2)] {
             let cells = [(r, c), (r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)];
             tables.push(Lut::new(len5));
-            add_base(&mut images, &cells, tables.len() - 1);
+            arity.push(5);
+            add_base(&mut images, &cells, tables.len() - 1, G_PLUS);
         }
         // wraparound diagonals D_k = {(r, (r+k) mod 5)}: orbit reps k=0,1,2
         // (reflections/transposes cover the other offsets and the whole
@@ -281,7 +338,8 @@ impl NTupleNet {
             for k in 0..3 {
                 let cells: Vec<_> = (0..N).map(|r| (r, (r + k) % N)).collect();
                 tables.push(Lut::new(len5));
-                add_base(&mut images, &cells, tables.len() - 1);
+                arity.push(5);
+                add_base(&mut images, &cells, tables.len() - 1, G_DIAG);
             }
         }
         // 5-cell diagonal staircases: the 36 placements decompose into 6
@@ -298,7 +356,8 @@ impl NTupleNet {
             ];
             for cells in &reps {
                 tables.push(Lut::new(len5));
-                add_base(&mut images, cells, tables.len() - 1);
+                arity.push(5);
+                add_base(&mut images, cells, tables.len() - 1, G_STAIR);
             }
         }
         // 2x3 blocks: the 24 placements (both orientations) decompose into 4
@@ -309,6 +368,7 @@ impl NTupleNet {
                 None
             } else {
                 tables.push(Lut::new(m.pow(6)));
+                arity.push(6);
                 Some(tables.len() - 1)
             };
             let reps: [[(usize, usize); 6]; 4] = [
@@ -322,22 +382,28 @@ impl NTupleNet {
                     Some(t) => t,
                     None => {
                         tables.push(Lut::new(m.pow(6)));
+                        arity.push(6);
                         tables.len() - 1
                     }
                 };
-                add_base(&mut images, cells, table);
+                add_base(&mut images, cells, table, G_BLK23);
             }
         }
         let mut n_globals = 0;
         if cfg.global {
             tables.push(Lut::new(CELLS * CELLS)); // top-2 positions, canonical
             tables.push(Lut::new(20 * 8)); // dispersion bucket x max tier
+            arity.push(0);
+            arity.push(0);
             n_globals += 2;
         }
         if cfg.global2 {
             tables.push(Lut::new(CELLS * CELLS + 1)); // gated top-2 (+inactive)
             tables.push(Lut::new(CELLS * CELLS * CELLS + 1)); // gated top-3
             tables.push(Lut::new(20 * 8)); // dispersion bucket x max tier
+            arity.push(0);
+            arity.push(0);
+            arity.push(0);
             n_globals += 3;
         }
         // multi-stage: replicate the whole per-stage table set
@@ -347,6 +413,7 @@ impl NTupleNet {
             for t in 0..ntab_stage {
                 let len = tables[t].w.len();
                 tables.push(Lut::new(len));
+                arity.push(arity[t]);
             }
         }
         let perms: Vec<[u8; CELLS]> = (0..8)
@@ -363,6 +430,7 @@ impl NTupleNet {
             .collect();
         let mut stage_ready = vec![false; cfg.stages];
         stage_ready[0] = true;
+        let n_active_images = images.len();
         NTupleNet {
             tables,
             images,
@@ -373,25 +441,101 @@ impl NTupleNet {
             ntab_stage,
             promote: false,
             stage_ready,
+            stage_cap: cfg.stages - 1,
+            active: [true; 6],
+            n_active_images,
+            arity,
             perms,
         }
+    }
+
+    /// Progressive growth: deactivate every group not in `groups` (their
+    /// zero-init tables sit untouched until activated).
+    pub fn set_active_groups(&mut self, groups: &[u8]) {
+        self.active = [false; 6];
+        for &g in groups {
+            self.active[g as usize] = true;
+        }
+        self.recount_active();
+    }
+
+    pub fn activate_group(&mut self, g: u8) {
+        self.active[g as usize] = true;
+        self.recount_active();
+    }
+
+    pub fn active_groups(&self) -> [bool; 6] {
+        self.active
+    }
+
+    fn recount_active(&mut self) {
+        self.n_active_images = self
+            .images
+            .iter()
+            .filter(|i| self.active[i.group as usize])
+            .count();
+    }
+
+    /// Progressive growth along the alphabet axis: Coarse(12) -> Base(23).
+    /// Every tuple table is re-indexed so each fine combination inherits its
+    /// coarse parent's weight; TC accumulators start fresh (full rate for
+    /// the newly split entries). Global tables are alphabet-free.
+    pub fn grow_alphabet(&mut self) {
+        assert_eq!(self.cfg.alphabet, Alphabet::Coarse, "can only grow Coarse");
+        let fine = Alphabet::Base;
+        let mf = fine.size();
+        for (t, lut) in self.tables.iter_mut().enumerate() {
+            let k = self.arity[t] as usize;
+            if k == 0 {
+                continue;
+            }
+            let mut w = vec![0.0f32; mf.pow(k as u32)];
+            for (i, slot) in w.iter_mut().enumerate() {
+                let mut rest = i;
+                let mut ci = 0usize;
+                let mut digits = [0usize; 6];
+                for d in (0..k).rev() {
+                    digits[d] = rest % mf;
+                    rest /= mf;
+                }
+                for &dg in digits.iter().take(k) {
+                    ci = ci * 12 + COARSE_OF_BASE[dg] as usize;
+                }
+                *slot = lut.w[ci];
+            }
+            let len = w.len();
+            lut.w = w;
+            lut.e = vec![0.0; len];
+            lut.a = vec![0.0; len];
+        }
+        self.cfg.alphabet = fine;
+        self.m = mf;
+    }
+
+    /// Adaptive staging: raise the stage cap, promoting weights into the
+    /// newly opened stage.
+    pub fn activate_stage(&mut self, s: usize) {
+        assert!(s < self.cfg.stages);
+        self.promote_stage(s);
+        self.stage_cap = self.stage_cap.max(s);
     }
 
     /// Stage of a board encoding: 0 below max tile 96, 1 below 768, else 2
     /// (always 0 for single-stage nets).
     fn stage_of(&self, codes: &[u8; CELLS]) -> usize {
-        if self.cfg.stages == 1 {
+        if self.cfg.stages == 1 || self.stage_cap == 0 {
             return 0;
         }
         let a = self.cfg.alphabet;
         let mx = codes.iter().map(|&c| code_mag(c, a)).max().unwrap_or(1);
-        if mx < 96 {
+        let raw = if mx < 96 {
             0
         } else if mx < 768 {
             1
         } else {
             2
-        }
+        };
+        raw.min(self.stage_cap)
     }
 
     fn index(&self, img: &Image, codes: &[u8; CELLS]) -> usize {
@@ -491,6 +635,9 @@ impl NTupleNet {
         let off = self.stage_of(codes) * self.ntab_stage;
         let mut v = 0.0f64;
         for img in &self.images {
+            if !self.active[img.group as usize] {
+                continue;
+            }
             v += self.tables[off + img.table].w[self.index(img, codes)] as f64;
         }
         if self.n_globals > 0 {
@@ -528,8 +675,11 @@ impl NTupleNet {
             self.promote_stage(stage);
         }
         let off = stage * self.ntab_stage;
-        let per = self.alpha * delta / (self.images.len() + self.n_globals) as f32;
+        let per = self.alpha * delta / (self.n_active_images + self.n_globals) as f32;
         for k in 0..self.images.len() {
+            if !self.active[self.images[k].group as usize] {
+                continue;
+            }
             let i = {
                 let img = &self.images[k];
                 self.index(img, codes)
@@ -785,11 +935,17 @@ fn choose_train(
 
 /// One self-play game with TD(0) updates. Returns (score, moves).
 pub fn train_game(net: &mut NTupleNet, seed: u32) -> (u64, u32) {
-    train_game_eps(net, seed, 0.0, 0.0)
+    let (s, m, _) = train_game_eps(net, seed, 0.0, 0.0);
+    (s, m)
 }
 
 /// TD(0) self-play with optional epsilon-exploration.
-pub fn train_game_eps(net: &mut NTupleNet, seed: u32, eps_rank: f32, eps_rand: f32) -> (u64, u32) {
+pub fn train_game_eps(
+    net: &mut NTupleNet,
+    seed: u32,
+    eps_rank: f32,
+    eps_rand: f32,
+) -> (u64, u32, u64) {
     let mut b = Board::new_game(seed);
     let mut xrng = Mulberry32::new(seed ^ 0x9E37_79B9);
     let mut prev: Option<[u8; CELLS]> = None;
@@ -799,7 +955,7 @@ pub fn train_game_eps(net: &mut NTupleNet, seed: u32, eps_rank: f32, eps_rand: f
                 if let Some(pa) = prev {
                     net.update(&pa, 0.0);
                 }
-                return (b.score, b.moves_made);
+                return (b.score, b.moves_made, b.max_tile());
             }
             Some((mv, r, after, _)) => {
                 if let Some(pa) = prev {
@@ -821,7 +977,8 @@ pub fn train_game_lambda(
     lambda: f32,
     trace_len: usize,
 ) -> (u64, u32) {
-    train_game_lambda_eps(net, seed, lambda, trace_len, 0.0, 0.0)
+    let (s, m, _) = train_game_lambda_eps(net, seed, lambda, trace_len, 0.0, 0.0);
+    (s, m)
 }
 
 /// TD(lambda) self-play with optional epsilon-exploration; traces are cut at
@@ -834,7 +991,7 @@ pub fn train_game_lambda_eps(
     trace_len: usize,
     eps_rank: f32,
     eps_rand: f32,
-) -> (u64, u32) {
+) -> (u64, u32, u64) {
     fn apply_traces(
         net: &mut NTupleNet,
         traces: &std::collections::VecDeque<[u8; CELLS]>,
@@ -860,7 +1017,7 @@ pub fn train_game_lambda_eps(
                     let delta = -(net.value(last) as f32);
                     apply_traces(net, &traces, lambda, delta);
                 }
-                return (b.score, b.moves_made);
+                return (b.score, b.moves_made, b.max_tile());
             }
             Some((mv, r, after, explored)) => {
                 if let Some(last) = traces.front() {
@@ -1103,6 +1260,55 @@ mod tests {
                 assert!(stamped.contains(&p), "{name} placement missing: {p:?}");
             }
         }
+    }
+
+    #[test]
+    fn alphabet_growth_preserves_values() {
+        let mut cfg = small_cfg();
+        cfg.alphabet = Alphabet::Coarse;
+        let mut net = NTupleNet::new(1.0, cfg);
+        let mut b = Board::new_game(21);
+        for _ in 0..40 {
+            match net.greedy(&b) {
+                Some((mv, r, after)) => {
+                    net.update(&after, r + 30.0);
+                    b.apply(&mv);
+                }
+                None => break,
+            }
+        }
+        let before: Vec<f64> = (0..5)
+            .map(|s| {
+                let bb = Board::new_game(100 + s);
+                net.value(&net.encode(&bb.cells))
+            })
+            .collect();
+        net.grow_alphabet();
+        assert_eq!(net.cfg.alphabet, Alphabet::Base);
+        for (s, bv) in before.iter().enumerate() {
+            let bb = Board::new_game(100 + s as u32);
+            let av = net.value(&net.encode(&bb.cells));
+            assert!((av - bv).abs() < 1e-3, "seed {s}: {av} vs {bv}");
+        }
+    }
+
+    #[test]
+    fn group_activation_changes_capacity() {
+        let mut cfg = small_cfg();
+        cfg.staircase = true;
+        let mut net = NTupleNet::new(1.0, cfg);
+        net.set_active_groups(&[G_ROWS, G_SQ2]);
+        let b = Board::new_game(9);
+        let codes = net.encode(&b.cells);
+        net.update(&codes, 80.0);
+        let v_small = net.value(&codes);
+        net.activate_group(G_PLUS);
+        net.activate_group(G_STAIR);
+        // newly activated tables are zero-init: value unchanged until trained
+        assert!((net.value(&codes) - v_small).abs() < 1e-9);
+        let v0 = net.value(&codes);
+        net.update(&codes, v0 + 100.0);
+        assert!(net.value(&codes) > v0, "activated tables must learn");
     }
 
     #[test]
