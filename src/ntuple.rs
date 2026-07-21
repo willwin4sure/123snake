@@ -895,7 +895,7 @@ impl NTupleNet {
             } else {
                 false
             };
-            let global2 = if first >= SAVE_MAGIC {
+            let global2 = if first >= SAVE_MAGIC_V6 {
                 word()? != 0
             } else {
                 false
