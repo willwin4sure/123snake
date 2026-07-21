@@ -177,11 +177,13 @@ pub fn encode_board(cells: &[u64; CELLS]) -> [u8; CELLS] {
     out
 }
 
-/// One weight table with temporal-coherence accumulators.
+/// One weight table with temporal-coherence accumulators and (when the
+/// exploration bonus is enabled) per-entry visit counts.
 struct Lut {
     w: Vec<f32>,
     e: Vec<f32>,
     a: Vec<f32>,
+    n: Vec<u32>,
 }
 
 impl Lut {
@@ -190,6 +192,7 @@ impl Lut {
             w: vec![0.0; len],
             e: vec![0.0; len],
             a: vec![0.0; len],
+            n: Vec::new(),
         }
     }
 }
@@ -288,6 +291,9 @@ pub struct NTupleNet {
     arity: Vec<u8>,
     /// Dihedral index permutations: perms[t][i] = image of cell i.
     perms: Vec<[u8; CELLS]>,
+    /// Per-entry exploration bonus scale (OTD-style): each entry adds
+    /// bonus/sqrt(1+visits) to TRAINING move selection only. 0 = off.
+    pub bonus: f32,
 }
 
 impl NTupleNet {
@@ -450,7 +456,57 @@ impl NTupleNet {
             n_active_images,
             arity,
             perms,
+            bonus: 0.0,
         }
+    }
+
+    /// Enable the OTD-style exploration bonus: `total` is the optimism a
+    /// fully-novel board carries (split across contributors); it decays per
+    /// entry as 1/sqrt(1+visits). Lives outside the learned weights, so TD
+    /// targets and eval remain unbiased and TC accumulators stay clean.
+    pub fn enable_bonus(&mut self, total: f32) {
+        self.bonus = total / (self.n_active_images + self.n_globals) as f32;
+        for t in &mut self.tables {
+            t.n = vec![0; t.w.len()];
+        }
+    }
+
+    fn bonus_term(&self, codes: &[u8; CELLS]) -> f64 {
+        let off = self.stage_of(codes) * self.ntab_stage;
+        let mut b = 0.0f64;
+        for img in &self.images {
+            if !self.active[img.group as usize] {
+                continue;
+            }
+            let t = &self.tables[off + img.table];
+            let n = t.n[self.index(img, codes)];
+            b += (self.bonus as f64) / (1.0 + n as f64).sqrt();
+        }
+        if self.n_globals > 0 {
+            let (g, ng) = self.global_indices(codes);
+            let base = off + self.ntab_stage - self.n_globals;
+            for (k, &gi) in g.iter().take(ng).enumerate() {
+                let n = self.tables[base + k].n[gi];
+                b += (self.bonus as f64) / (1.0 + n as f64).sqrt();
+            }
+        }
+        b
+    }
+
+    /// Training-time greedy: plain V plus the exploration bonus.
+    pub fn greedy_bonus(&self, b: &Board) -> Option<(Move, f64, [u8; CELLS])> {
+        let codes = self.encode(&b.cells);
+        let mut best: Option<(Move, f64, [u8; CELLS], f64)> = None;
+        for mv in b.legal_moves_capped(MOVE_CAP) {
+            let v = b.cells[mv.path[0] as usize];
+            let sum = v * mv.path.len() as u64;
+            let after = self.afterstate(&codes, &mv, sum);
+            let val = sum as f64 + self.value(&after) + self.bonus_term(&after);
+            if best.as_ref().is_none_or(|(_, _, _, bv)| val > *bv) {
+                best = Some((mv, sum as f64, after, val));
+            }
+        }
+        best.map(|(mv, r, a, _)| (mv, r, a))
     }
 
     /// Progressive growth: deactivate every group not in `groups` (their
@@ -689,13 +745,21 @@ impl NTupleNet {
                 let img = &self.images[k];
                 self.index(img, codes)
             };
-            bump(&mut self.tables[off + self.images[k].table], i, per, delta);
+            let t = &mut self.tables[off + self.images[k].table];
+            if !t.n.is_empty() {
+                t.n[i] = t.n[i].saturating_add(1);
+            }
+            bump(t, i, per, delta);
         }
         if self.n_globals > 0 {
             let (g, n) = self.global_indices(codes);
             let base = off + self.ntab_stage - self.n_globals;
             for (k, &gi) in g.iter().take(n).enumerate() {
-                bump(&mut self.tables[base + k], gi, per, delta);
+                let t = &mut self.tables[base + k];
+                if !t.n.is_empty() {
+                    t.n[gi] = t.n[gi].saturating_add(1);
+                }
+                bump(t, gi, per, delta);
             }
         }
     }
@@ -916,6 +980,9 @@ fn choose_train(
 ) -> Option<(Move, f64, [u8; CELLS], bool)> {
     let roll = rng.next_f64() as f32;
     if roll >= eps_rank + eps_rand {
+        if net.bonus > 0.0 {
+            return net.greedy_bonus(b).map(|(mv, r, a)| (mv, r, a, false));
+        }
         return net.greedy(b).map(|(mv, r, a)| (mv, r, a, false));
     }
     let codes = net.encode(&b.cells);

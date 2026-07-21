@@ -400,6 +400,10 @@ fn cmd_ntuple(args: &[String]) {
         net.init_optimistic(v0);
         eprintln!("optimistic init: V0 = {v0}");
     }
+    if let Some(bt) = arg_val(args, "--bonus").and_then(|v| v.parse::<f32>().ok()) {
+        net.enable_bonus(bt);
+        eprintln!("exploration bonus enabled: total {bt}, decays 1/sqrt(1+visits)");
+    }
     if args.iter().any(|a| a == "--promote") {
         net.promote = true;
         eprintln!("stage promotion enabled");
