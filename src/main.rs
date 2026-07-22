@@ -560,13 +560,14 @@ fn cmd_ntuple(args: &[String]) {
             Some(spec) => {
                 use integer_snake::ntuple::NTupleSearchPolicy;
                 use integer_snake::search::Policy;
-                let (k, s) = spec.split_once(':').expect("--exp topk:samples");
-                let mut pol = NTupleSearchPolicy::new(
-                    net,
-                    k.parse().expect("topk"),
-                    s.parse().expect("samples"),
-                    99,
-                );
+                let nums: Vec<u32> = spec
+                    .split(':')
+                    .map(|x| x.parse().expect("--exp k:s[:k2:s2...]"))
+                    .collect();
+                assert!(nums.len() >= 2 && nums.len() % 2 == 0, "--exp k:s pairs");
+                let levels: Vec<(usize, u32)> =
+                    nums.chunks(2).map(|c| (c[0] as usize, c[1])).collect();
+                let mut pol = NTupleSearchPolicy::with_levels(net, levels, 99);
                 (0..eval_games)
                     .map(|g| {
                         let mut b = Board::new_game(eval_seed0 + g);

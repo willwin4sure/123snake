@@ -1660,33 +1660,40 @@ impl crate::search::Policy for NTuplePolicy {
     }
 }
 
-/// Depth-2 expectimax over the net: root moves are pruned to the top-k by
-/// the one-ply proxy (r + V(afterstate)), then each survivor's chance node
-/// is estimated with `samples` sampled refills, valued by the best one-ply
-/// reply in the child.
+/// Multi-level sampled expectimax over the net. `levels` gives (top-k,
+/// samples) per ply: at each level, moves are pruned to top-k by the
+/// one-ply proxy, each survivor's chance node is estimated by sampled
+/// refills, and children are valued by the next level (or the raw greedy
+/// best reply once levels are exhausted).
 pub struct NTupleSearchPolicy {
     pub net: NTupleNet,
-    pub topk: usize,
-    pub samples: u32,
+    pub levels: Vec<(usize, u32)>,
     pub rng: Mulberry32,
 }
 
 impl NTupleSearchPolicy {
     pub fn new(net: NTupleNet, topk: usize, samples: u32, seed: u32) -> Self {
+        Self::with_levels(net, vec![(topk, samples)], seed)
+    }
+
+    pub fn with_levels(net: NTupleNet, levels: Vec<(usize, u32)>, seed: u32) -> Self {
+        assert!(!levels.is_empty());
         NTupleSearchPolicy {
             net,
-            topk,
-            samples,
+            levels,
             rng: Mulberry32::new(seed),
         }
     }
-}
 
-impl crate::search::Policy for NTupleSearchPolicy {
-    fn name(&self) -> String {
-        format!("ntuple-exp:k{}:s{}", self.topk, self.samples)
-    }
-    fn choose(&mut self, b: &Board) -> Option<Move> {
+    /// Best (move, value) at `level`; `None` if the board is dead.
+    fn best_at(&mut self, b: &Board, level: usize) -> Option<(Move, f64)> {
+        if level >= self.levels.len() {
+            return self
+                .net
+                .greedy(b)
+                .map(|(mv, r, after)| (mv, r + self.net.value(&after)));
+        }
+        let (topk, samples) = self.levels[level];
         let codes = self.net.encode(&b.cells);
         let mut scored: Vec<(Move, f64, f64)> = b
             .legal_moves_capped(MOVE_CAP)
@@ -1702,26 +1709,35 @@ impl crate::search::Policy for NTupleSearchPolicy {
             })
             .collect();
         scored.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
-        scored.truncate(self.topk.max(1));
+        scored.truncate(topk.max(1));
         let mut best: Option<(Move, f64)> = None;
         for (mv, sum, _) in scored {
             let mut acc = 0.0;
-            for _ in 0..self.samples {
+            for _ in 0..samples {
                 let refills: Vec<u64> = (0..mv.path.len() - 1).map(|_| self.rng.rnd13()).collect();
                 let child = b.apply_with_refills(&mv, &refills);
-                let reply = self
-                    .net
-                    .greedy(&child)
-                    .map(|(_, r, after)| r + self.net.value(&after))
-                    .unwrap_or(0.0);
-                acc += reply;
+                acc += self.best_at(&child, level + 1).map_or(0.0, |(_, v)| v);
             }
-            let val = sum + acc / self.samples as f64;
+            let val = sum + acc / samples as f64;
             if best.as_ref().is_none_or(|(_, bv)| val > *bv) {
                 best = Some((mv, val));
             }
         }
-        best.map(|(mv, _)| mv)
+        best
+    }
+}
+
+impl crate::search::Policy for NTupleSearchPolicy {
+    fn name(&self) -> String {
+        let spec: Vec<String> = self
+            .levels
+            .iter()
+            .map(|(k, s)| format!("{k}:{s}"))
+            .collect();
+        format!("ntuple-exp:{}", spec.join(":"))
+    }
+    fn choose(&mut self, b: &Board) -> Option<Move> {
+        self.best_at(b, 0).map(|(mv, _)| mv)
     }
 }
 
