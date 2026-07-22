@@ -1,0 +1,7 @@
+greedy | greedy | secs=1 | eval n=100 seed0=15000  mean 2280.6  p10 332  p50 1705  p90 4451  p99 7140  max 8190
+d2-4x8 | 4:8 | secs=21 | eval n=100 seed0=15000  mean 2586.7  p10 450  p50 2212  p90 5301  p99 6958  max 9426
+d2-8x16 | 8:16 | secs=75 | eval n=100 seed0=15000  mean 2737.4  p10 359  p50 2292  p90 5991  p99 9422  max 10476
+d2-16x24 | 16:24 | secs=229 | eval n=100 seed0=15000  mean 3108.2  p10 413  p50 2499  p90 6524  p99 9549  max 10860
+d2-16x48 | 16:48 | secs=497 | eval n=100 seed0=15000  mean 3429.7  p10 796  p50 3154  p90 7190  p99 11061  max 13254
+d2-24x64 | 24:64 | secs=963 | eval n=100 seed0=15000  mean 3755.1  p10 526  p50 2991  p90 7971  p99 10572  max 10982
+d3-4444 | 4:4:4:4 | secs=134 | eval n=100 seed0=15000  mean 2123.4  p10 302  p50 1639  p90 4619  p99 6888  max 8356
