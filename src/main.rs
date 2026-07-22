@@ -78,6 +78,34 @@ fn cmd_serve(args: &[String]) {
     ) -> f64 {
         sampled_av_n(net, b, mv, sum, rng, 24)
     }
+    // "search=k:s[:k2:s2...]" query param -> expectimax levels ("1" = 16:48)
+    fn parse_search(query: &str) -> Option<Vec<(usize, u32)>> {
+        query
+            .split('&')
+            .find_map(|kv| kv.strip_prefix("search="))
+            .and_then(|v| match v {
+                "" | "0" => None,
+                "1" => Some(vec![(16, 48)]),
+                s => {
+                    let nums: Vec<u32> = s.split(':').filter_map(|x| x.parse().ok()).collect();
+                    (nums.len() >= 2 && nums.len().is_multiple_of(2))
+                        .then(|| nums.chunks(2).map(|c| (c[0] as usize, c[1])).collect())
+                }
+            })
+    }
+    // V shown in the header stats: root expectimax value when a search spec
+    // is active (the bot's actual objective), one-ply greedy otherwise
+    fn state_value(
+        net: &integer_snake::ntuple::NTupleNet,
+        b: &Board,
+        spec: Option<&[(usize, u32)]>,
+        rng: &mut Mulberry32,
+    ) -> Option<f64> {
+        match spec {
+            Some(lv) => integer_snake::ntuple::search_best(net, b, lv, rng).map(|(_, v)| v),
+            None => net.greedy(b).map(|(_, r, a)| r + net.value(&a)),
+        }
+    }
     let listener = TcpListener::bind(("127.0.0.1", port)).expect("bind");
 
     fn state_json(b: &Board, v: Option<f64>, hist: usize) -> String {
@@ -151,12 +179,13 @@ fn cmd_serve(args: &[String]) {
             ),
             "/new" => {
                 let seed: u32 = query
-                    .strip_prefix("seed=")
+                    .split('&')
+                    .find_map(|kv| kv.strip_prefix("seed="))
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(1);
                 let b = Board::new_game(seed);
                 history.clear();
-                let v = net.greedy(&b).map(|(_, r, a)| r + net.value(&a));
+                let v = state_value(&net, &b, parse_search(query).as_deref(), &mut srng);
                 let json = state_json(&b, v, 0);
                 game = Some(b);
                 ("application/json", json)
@@ -193,7 +222,8 @@ fn cmd_serve(args: &[String]) {
             },
             "/apply" => {
                 let path: Vec<u8> = query
-                    .strip_prefix("path=")
+                    .split('&')
+                    .find_map(|kv| kv.strip_prefix("path="))
                     .map(|s| s.split(',').filter_map(|x| x.parse().ok()).collect())
                     .unwrap_or_default();
                 match &mut game {
@@ -211,7 +241,7 @@ fn cmd_serve(args: &[String]) {
                             .unwrap_or(0.0);
                         let av = sampled_av(&net, b, &mv, sum, &mut srng);
                         b.apply(&mv);
-                        let v = net.greedy(b).map(|(_, r, a)| r + net.value(&a));
+                        let v = state_value(&net, b, parse_search(query).as_deref(), &mut srng);
                         let st = state_json(b, v, history.len());
                         let pc: Vec<String> = path.iter().map(|c| c.to_string()).collect();
                         (
@@ -230,7 +260,7 @@ fn cmd_serve(args: &[String]) {
                 Some(b) => match history.pop() {
                     Some(prev) => {
                         *b = prev;
-                        let v = net.greedy(b).map(|(_, r, a)| r + net.value(&a));
+                        let v = state_value(&net, b, parse_search(query).as_deref(), &mut srng);
                         ("application/json", state_json(b, v, history.len()))
                     }
                     None => ("application/json", "{\"err\":\"empty\"}".to_string()),
@@ -242,22 +272,9 @@ fn cmd_serve(args: &[String]) {
                     // search mode: shared expectimax core (exact-enum chance
                     // nodes); "search=k:s" picks the spec, "search=1" is the
                     // legacy alias for 16:48
-                    let levels: Option<Vec<(usize, u32)>> = query
-                        .split('&')
-                        .find_map(|kv| kv.strip_prefix("search="))
-                        .and_then(|v| match v {
-                            "" | "0" => None,
-                            "1" => Some(vec![(16, 48)]),
-                            s => {
-                                let nums: Vec<u32> =
-                                    s.split(':').filter_map(|x| x.parse().ok()).collect();
-                                (nums.len() >= 2 && nums.len().is_multiple_of(2)).then(|| {
-                                    nums.chunks(2).map(|c| (c[0] as usize, c[1])).collect()
-                                })
-                            }
-                        });
-                    let (mv, av) = if let Some(levels) = levels {
-                        integer_snake::ntuple::search_best(&net, b, &levels, &mut srng)
+                    let levels = parse_search(query);
+                    let (mv, av) = if let Some(levels) = &levels {
+                        integer_snake::ntuple::search_best(&net, b, levels, &mut srng)
                             .expect("moves exist")
                     } else {
                         let (mv, _, _) = net.greedy(b).expect("moves exist");
@@ -270,7 +287,9 @@ fn cmd_serve(args: &[String]) {
                     let path_cells: Vec<String> = mv.path.iter().map(|c| c.to_string()).collect();
                     history.push(b.clone());
                     b.apply(&mv);
-                    let v = net.greedy(b).map(|(_, r, a)| r + net.value(&a));
+                    // V LEFT / pace track what the bot actually optimizes:
+                    // root expectimax value in search mode, greedy otherwise
+                    let v = state_value(&net, b, levels.as_deref(), &mut srng);
                     let st = state_json(b, v, history.len());
                     (
                         "application/json",
@@ -306,9 +325,11 @@ fn cmd_ntuple(args: &[String]) {
     let alpha: f32 = arg_val(args, "--alpha")
         .and_then(|v| v.parse().ok())
         .unwrap_or(1.0);
+    // Training seeds live at 1e8+ so they can NEVER collide with eval
+    // blocks (benchmark/TTC at 15000+, in-training eval at 500000+).
     let seed0: u32 = arg_val(args, "--seed0")
         .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
+        .unwrap_or(100_000_000);
     let eval_every: u32 = arg_val(args, "--eval-every")
         .and_then(|v| v.parse().ok())
         .unwrap_or(5000);
@@ -318,6 +339,15 @@ fn cmd_ntuple(args: &[String]) {
     let eval_seed0: u32 = arg_val(args, "--eval-seed0")
         .and_then(|v| v.parse().ok())
         .unwrap_or(500_000);
+    if games > 0 {
+        let (t0, t1) = (seed0 as u64, seed0 as u64 + games as u64);
+        let (e0, e1) = (eval_seed0 as u64, eval_seed0 as u64 + eval_games as u64);
+        assert!(
+            t1 <= e0 || e1 <= t0,
+            "training seeds [{t0},{t1}) overlap eval seeds [{e0},{e1}); \
+             pass disjoint --seed0 / --eval-seed0"
+        );
+    }
     let save = arg_val(args, "--save");
     let stage_thresholds: [u32; 2] = arg_val(args, "--stage-thresholds")
         .and_then(|v| {
@@ -567,6 +597,7 @@ fn cmd_ntuple(args: &[String]) {
                 let mut pol = NTupleSearchPolicy::with_levels(net, vec![(1, 1)], 99);
                 let mut scores: Vec<Vec<u64>> = vec![Vec::new(); cfgs.len()];
                 let mut secs = vec![0.0f64; cfgs.len()];
+                let mut moves = vec![0u64; cfgs.len()];
                 for g in 0..eval_games {
                     for (i, (name, _, levels)) in cfgs.iter().enumerate() {
                         let t0 = std::time::Instant::now();
@@ -589,16 +620,18 @@ fn cmd_ntuple(args: &[String]) {
                         }
                         secs[i] += t0.elapsed().as_secs_f64();
                         scores[i].push(b.score);
+                        moves[i] += b.moves_made as u64;
                         if progress {
                             let tot: u64 = scores[i].iter().sum();
                             eprintln!(
-                                "PROG {} {} {} {:.1} {} {:.0}",
+                                "PROG {} {} {} {:.1} {} {:.0} {}",
                                 name,
                                 g + 1,
                                 eval_games,
                                 tot as f64 / scores[i].len() as f64,
                                 b.score,
-                                secs[i]
+                                secs[i],
+                                b.moves_made
                             );
                         }
                     }
@@ -608,7 +641,7 @@ fn cmd_ntuple(args: &[String]) {
                     ss.sort_unstable();
                     let pct = |p: f64| ss[((ss.len() - 1) as f64 * p) as usize];
                     println!(
-                        "{} | {} | secs={} | eval n={} seed0={}  mean {:.1}  p10 {}  p50 {}  p90 {}  p99 {}  max {}",
+                        "{} | {} | secs={} | eval n={} seed0={}  mean {:.1}  p10 {}  p50 {}  p90 {}  p99 {}  max {} | moves={} ms/mv={:.2}",
                         name,
                         spec,
                         secs[i].round() as u64,
@@ -619,7 +652,9 @@ fn cmd_ntuple(args: &[String]) {
                         pct(0.50),
                         pct(0.90),
                         pct(0.99),
-                        ss[ss.len() - 1]
+                        ss[ss.len() - 1],
+                        moves[i],
+                        secs[i] * 1000.0 / moves[i].max(1) as f64
                     );
                 }
                 println!("ALLDONE");

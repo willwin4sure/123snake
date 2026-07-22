@@ -163,7 +163,7 @@
   </div>
   <div id="movesbox">
     <h3>Moves by V <span id="movecount"></span></h3>
-    <table><thead><tr><th>#</th><th>move</th><th>sum</th><th>V</th></tr></thead>
+    <table><thead><tr><th>#</th><th>move</th><th>sum</th><th>V immediate</th></tr></thead>
     <tbody id="mtb"></tbody></table>
   </div>
   <p class="foot" id="model"></p>
@@ -455,7 +455,7 @@
   }
   function newGame(){
     playing=false;document.getElementById('play').textContent='Play';
-    api('/new?seed='+rndSeed()).then(function(st){
+    api('/new?seed='+rndSeed()+botQ('&')).then(function(st){
       prevV=st.v;setDelta('dmove',null);setDelta('dluck',null);
       buildBoard(st.cells);setStat(st);refreshMoves();
     });
@@ -476,7 +476,7 @@
   function playPath(path){
     initAudio();
     if(over||busy)return;
-    api('/apply?path='+path.join(',')).then(function(r){
+    api('/apply?path='+path.join(',')+botQ('&')).then(function(r){
       if(r.err){sPop();clearHighlight();return;}
       applyResult(r);
     });
@@ -546,6 +546,7 @@
   if(!localStorage.getItem('snakeLabBot')&&localStorage.getItem('snakeLabSearch')==='on')botIdx=1;
   if(!(botIdx>=0&&botIdx<BOT_MODES.length))botIdx=0;
   var botBtn=document.getElementById('botmode');
+  function botQ(sep){return botIdx?sep+'search='+BOT_MODES[botIdx]:''}
   function botLabel(){botBtn.textContent='Bot: '+(botIdx?BOT_MODES[botIdx].replace(':','\u00d7'):'greedy')}
   botLabel();
   botBtn.onclick=function(){
@@ -583,7 +584,7 @@
     initAudio();
     if(busy)return;
     playing=false;document.getElementById('play').textContent='Play';
-    api('/undo').then(function(st){
+    api('/undo'+botQ('?')).then(function(st){
       if(st.err)return;
       prevV=st.v;setDelta('dmove',null);setDelta('dluck',null);
       sPop();buildBoard(st.cells);setStat(st);refreshMoves();
