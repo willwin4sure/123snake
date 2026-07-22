@@ -553,6 +553,7 @@
     botIdx=(botIdx+1)%BOT_MODES.length;
     localStorage.setItem('snakeLabBot',String(botIdx));
     botLabel();
+    api('/state'+botQ('?')).then(function(st){if(!st.err)setStat(st);});
   };
   var speedEl=document.getElementById('speed');
   var SPEEDS=[900,500,300,150,70];

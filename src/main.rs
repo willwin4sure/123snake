@@ -190,6 +190,15 @@ fn cmd_serve(args: &[String]) {
                 game = Some(b);
                 ("application/json", json)
             }
+            // read-only: current state with V under the given search spec,
+            // so the UI can refresh V LEFT when the bot mode changes
+            "/state" => match &game {
+                Some(b) => {
+                    let v = state_value(&net, b, parse_search(query).as_deref(), &mut srng);
+                    ("application/json", state_json(b, v, history.len()))
+                }
+                None => ("application/json", "{\"err\":\"nogame\"}".to_string()),
+            },
             "/moves" => match &game {
                 Some(b) => {
                     let codes = net.encode(&b.cells);
