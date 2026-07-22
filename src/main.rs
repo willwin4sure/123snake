@@ -554,6 +554,97 @@ fn cmd_ntuple(args: &[String]) {
         return;
     }
     if games == 0 {
+        // --exp-grid name=spec,...: round-robin TTC grid. Outer loop = seed,
+        // inner loop = configs, so partial stats stay comparable across
+        // configs at every point; ONE net instance is shared by all of them
+        // (only the levels vector is swapped per config).
+        let net = match arg_val(args, "--exp-grid") {
+            Some(gridspec) => {
+                use integer_snake::ntuple::NTupleSearchPolicy;
+                use integer_snake::search::Policy;
+                type Cfg = (String, String, Option<Vec<(usize, u32)>>);
+                let cfgs: Vec<Cfg> = gridspec
+                    .split(',')
+                    .map(|c| {
+                        let (name, spec) = c.split_once('=').expect("--exp-grid name=spec,...");
+                        let levels = (spec != "greedy").then(|| {
+                            let nums: Vec<u32> = spec
+                                .split(':')
+                                .map(|x| x.parse().expect("--exp-grid k:s pairs"))
+                                .collect();
+                            assert!(
+                                nums.len() >= 2 && nums.len().is_multiple_of(2),
+                                "--exp-grid k:s pairs"
+                            );
+                            nums.chunks(2).map(|c| (c[0] as usize, c[1])).collect()
+                        });
+                        (name.to_string(), spec.to_string(), levels)
+                    })
+                    .collect();
+                let progress = args.iter().any(|a| a == "--progress");
+                let mut pol = NTupleSearchPolicy::with_levels(net, vec![(1, 1)], 99);
+                let mut scores: Vec<Vec<u64>> = vec![Vec::new(); cfgs.len()];
+                let mut secs = vec![0.0f64; cfgs.len()];
+                for g in 0..eval_games {
+                    for (i, (name, _, levels)) in cfgs.iter().enumerate() {
+                        let t0 = std::time::Instant::now();
+                        let mut b = Board::new_game(eval_seed0 + g);
+                        match levels {
+                            None => {
+                                while let Some((mv, _, _)) = pol.net.greedy(&b) {
+                                    b.apply(&mv);
+                                }
+                            }
+                            Some(lv) => {
+                                pol.levels = lv.clone();
+                                pol.rng = Mulberry32::new(
+                                    (i as u32).wrapping_mul(1_000_003).wrapping_add(g),
+                                );
+                                while let Some(mv) = pol.choose(&b) {
+                                    b.apply(&mv);
+                                }
+                            }
+                        }
+                        secs[i] += t0.elapsed().as_secs_f64();
+                        scores[i].push(b.score);
+                        if progress {
+                            let tot: u64 = scores[i].iter().sum();
+                            eprintln!(
+                                "PROG {} {} {} {:.1} {} {:.0}",
+                                name,
+                                g + 1,
+                                eval_games,
+                                tot as f64 / scores[i].len() as f64,
+                                b.score,
+                                secs[i]
+                            );
+                        }
+                    }
+                }
+                for (i, (name, spec, _)) in cfgs.iter().enumerate() {
+                    let mut ss = scores[i].clone();
+                    ss.sort_unstable();
+                    let pct = |p: f64| ss[((ss.len() - 1) as f64 * p) as usize];
+                    println!(
+                        "{} | {} | secs={} | eval n={} seed0={}  mean {:.1}  p10 {}  p50 {}  p90 {}  p99 {}  max {}",
+                        name,
+                        spec,
+                        secs[i].round() as u64,
+                        ss.len(),
+                        eval_seed0,
+                        ss.iter().sum::<u64>() as f64 / ss.len() as f64,
+                        pct(0.10),
+                        pct(0.50),
+                        pct(0.90),
+                        pct(0.99),
+                        ss[ss.len() - 1]
+                    );
+                }
+                println!("ALLDONE");
+                return;
+            }
+            None => net,
+        };
         // eval-only: percentiles over the eval block; --exp topk:samples
         // switches from one-ply greedy to depth-2 net-leaf expectimax
         let mut sc: Vec<u64> = match arg_val(args, "--exp") {

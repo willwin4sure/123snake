@@ -345,7 +345,8 @@ const SAVE_MAGIC_V4: u32 = 0x4E54_5634; // "NTV4": adds the global flag
 const SAVE_MAGIC_V5: u32 = 0x4E54_5635; // "NTV5": adds the stage count
 const SAVE_MAGIC_V6: u32 = 0x4E54_5636; // "NTV6": adds the global2 flag
 const SAVE_MAGIC_V7: u32 = 0x4E54_5637; // "NTV7": adds stage thresholds
-const SAVE_MAGIC: u32 = 0x4E54_5638; // "NTV8": alphabet id + extras mask
+const SAVE_MAGIC_V8: u32 = 0x4E54_5638; // "NTV8": alphabet id + extras mask
+const SAVE_MAGIC: u32 = 0x4E54_5639; // "NTV9": TC optimizer state (e/a/n)
 
 /// Approximate magnitude of a cell code, for ranking "largest tiles" in the
 /// global features. Exact on spawns and the ladder (which dominates big
@@ -1376,6 +1377,23 @@ impl NTupleNet {
                 wr.write_all(&x.to_le_bytes())?;
             }
         }
+        // NTV9: TC optimizer state, so resumed training keeps its per-entry
+        // rates instead of restarting them (rate = |E|/A after warmup).
+        for t in &self.tables {
+            for &x in &t.e {
+                wr.write_all(&x.to_le_bytes())?;
+            }
+            for &x in &t.a {
+                wr.write_all(&x.to_le_bytes())?;
+            }
+        }
+        // Bonus visit counts; empty (len 0) when the OTD bonus is off.
+        for t in &self.tables {
+            wr.write_all(&(t.n.len() as u64).to_le_bytes())?;
+            for &x in &t.n {
+                wr.write_all(&x.to_le_bytes())?;
+            }
+        }
         Ok(())
     }
 
@@ -1388,6 +1406,7 @@ impl NTupleNet {
         rd.read_exact(&mut b4)?;
         let first = u32::from_le_bytes(b4);
         let (cfg, ntab) = if first == SAVE_MAGIC
+            || first == SAVE_MAGIC_V8
             || first == SAVE_MAGIC_V7
             || first == SAVE_MAGIC_V6
             || first == SAVE_MAGIC_V5
@@ -1400,7 +1419,7 @@ impl NTupleNet {
                 Ok(u32::from_le_bytes(b4))
             };
             let aw = word()?;
-            let alphabet = if first >= SAVE_MAGIC {
+            let alphabet = if first >= SAVE_MAGIC_V8 {
                 match aw {
                     1 => Alphabet::Fine,
                     2 => Alphabet::Coarse,
@@ -1441,7 +1460,7 @@ impl NTupleNet {
             } else {
                 [96, 768]
             };
-            let extra = if first >= SAVE_MAGIC { word()? } else { 0 };
+            let extra = if first >= SAVE_MAGIC_V8 { word()? } else { 0 };
             let ntab = word()? as usize;
             (
                 NetConfig {
@@ -1475,6 +1494,34 @@ impl NTupleNet {
             rd.read_exact(&mut buf)?;
             for (i, ch) in buf.chunks_exact(4).enumerate() {
                 t.w[i] = f32::from_le_bytes([ch[0], ch[1], ch[2], ch[3]]);
+            }
+        }
+        if first >= SAVE_MAGIC {
+            // NTV9: restore TC optimizer state (pre-V9 files leave e/a
+            // zeroed, i.e. rates reset — the old behavior).
+            for t in &mut net.tables {
+                let mut buf = vec![0u8; t.e.len() * 4];
+                rd.read_exact(&mut buf)?;
+                for (i, ch) in buf.chunks_exact(4).enumerate() {
+                    t.e[i] = f32::from_le_bytes([ch[0], ch[1], ch[2], ch[3]]);
+                }
+                rd.read_exact(&mut buf)?;
+                for (i, ch) in buf.chunks_exact(4).enumerate() {
+                    t.a[i] = f32::from_le_bytes([ch[0], ch[1], ch[2], ch[3]]);
+                }
+            }
+            for t in &mut net.tables {
+                rd.read_exact(&mut b8)?;
+                let n_len = u64::from_le_bytes(b8) as usize;
+                if n_len > 0 {
+                    assert_eq!(n_len, t.w.len(), "visit-count length mismatch");
+                    let mut buf = vec![0u8; n_len * 4];
+                    rd.read_exact(&mut buf)?;
+                    t.n = buf
+                        .chunks_exact(4)
+                        .map(|ch| u32::from_le_bytes([ch[0], ch[1], ch[2], ch[3]]))
+                        .collect();
+                }
             }
         }
         Ok(net)
@@ -1674,6 +1721,18 @@ pub struct NTupleSearchPolicy {
     pub rng: Mulberry32,
 }
 
+/// The `idx`-th of the 3^n equally likely refill vectors (base-3 digits + 1).
+fn refill_combo(idx: u32, n: usize) -> Vec<u64> {
+    let mut t = idx;
+    (0..n)
+        .map(|_| {
+            let r = (t % 3 + 1) as u64;
+            t /= 3;
+            r
+        })
+        .collect()
+}
+
 impl NTupleSearchPolicy {
     pub fn new(net: NTupleNet, topk: usize, samples: u32, seed: u32) -> Self {
         Self::with_levels(net, vec![(topk, samples)], seed)
@@ -1715,13 +1774,38 @@ impl NTupleSearchPolicy {
         scored.truncate(topk.max(1));
         let mut best: Option<(Move, f64)> = None;
         for (mv, sum, _) in scored {
+            let n_vac = mv.path.len() - 1;
+            let space = 3u64.checked_pow(n_vac as u32);
             let mut acc = 0.0;
-            for _ in 0..samples {
-                let refills: Vec<u64> = (0..mv.path.len() - 1).map(|_| self.rng.rnd13()).collect();
-                let child = b.apply_with_refills(&mv, &refills);
-                acc += self.best_at(&child, level + 1).map_or(0.0, |(_, v)| v);
+            let n_eval: u32;
+            if let Some(n) = space.filter(|&n| n <= samples as u64) {
+                // Chance node fits in the sample budget: enumerate the full
+                // refill space (short chains — the common case). Exact
+                // expectation, and cheaper than sampling.
+                n_eval = n as u32;
+                for i in 0..n_eval {
+                    let child = b.apply_with_refills(&mv, &refill_combo(i, n_vac));
+                    acc += self.best_at(&child, level + 1).map_or(0.0, |(_, v)| v);
+                }
+            } else {
+                // Otherwise draw `samples` DISTINCT refill vectors (a uniform
+                // random subset, i.e. sampling without replacement): still
+                // unbiased, strictly lower variance than iid draws.
+                n_eval = samples;
+                let mut seen = std::collections::HashSet::with_capacity(samples as usize);
+                let mut got = 0;
+                while got < samples {
+                    let refills: Vec<u64> = (0..n_vac).map(|_| self.rng.rnd13()).collect();
+                    let key = refills.iter().fold(0u64, |a, &d| a * 3 + (d - 1));
+                    if !seen.insert(key) {
+                        continue;
+                    }
+                    got += 1;
+                    let child = b.apply_with_refills(&mv, &refills);
+                    acc += self.best_at(&child, level + 1).map_or(0.0, |(_, v)| v);
+                }
             }
-            let val = sum + acc / samples as f64;
+            let val = sum + acc / n_eval as f64;
             if best.as_ref().is_none_or(|(_, bv)| val > *bv) {
                 best = Some((mv, val));
             }
@@ -1779,6 +1863,45 @@ mod tests {
         let mut c = NetConfig::base();
         c.with_2x3 = false;
         c
+    }
+
+    #[test]
+    fn save_load_roundtrips_optimizer_state() {
+        let mut cfg = small_cfg();
+        cfg.alphabet = Alphabet::Coarse;
+        let mut net = NTupleNet::new(1.0, cfg);
+        net.tables[0].w[7] = -0.75;
+        net.tables[0].e[7] = 1.5;
+        net.tables[0].a[7] = 2.5;
+        net.tables[1].e[3] = -4.0;
+        net.tables[1].a[3] = 4.0;
+        net.tables[1].n = vec![0u32; net.tables[1].w.len()];
+        net.tables[1].n[3] = 42;
+        let p = std::env::temp_dir().join("ntv9-roundtrip-test.bin");
+        let path = p.to_str().unwrap();
+        net.save(path).unwrap();
+        let loaded = NTupleNet::load(path, 1.0).unwrap();
+        std::fs::remove_file(path).ok();
+        for (a, b) in net.tables.iter().zip(loaded.tables.iter()) {
+            assert_eq!(a.w, b.w);
+            assert_eq!(a.e, b.e);
+            assert_eq!(a.a, b.a);
+            assert_eq!(a.n, b.n);
+        }
+    }
+
+    #[test]
+    fn refill_combos_enumerate_full_space() {
+        for n in 1..=4usize {
+            let total = 3u32.pow(n as u32);
+            let combos: std::collections::BTreeSet<Vec<u64>> =
+                (0..total).map(|i| refill_combo(i, n)).collect();
+            assert_eq!(combos.len(), total as usize, "distinct combos for n={n}");
+            for c in &combos {
+                assert_eq!(c.len(), n);
+                assert!(c.iter().all(|&v| (1..=3).contains(&v)));
+            }
+        }
     }
 
     #[test]
