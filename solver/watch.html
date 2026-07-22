@@ -546,7 +546,7 @@
   });
 
   // ---- controls ----
-  var BOT_MODES=['greedy','16:48'];
+  var BOT_MODES=['greedy','8:96'];
   var botIdx=+(localStorage.getItem('snakeLabBot')||0);
   if(!localStorage.getItem('snakeLabBot')&&localStorage.getItem('snakeLabSearch')==='on')botIdx=1;
   if(!(botIdx>=0&&botIdx<BOT_MODES.length))botIdx=0;
