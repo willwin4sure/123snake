@@ -359,7 +359,7 @@
   }
   // the game's merge animation, driven by a server response
   function animateMove(r){
-    var f=Math.min(1,Math.max(.3,delayMs()/350));
+    var f=animF();
     board.style.setProperty('--tdur',Math.round(175*f)+'ms');
     var path=r.path, headI=path[path.length-1];
     var head=tileAt(headI), sum=r.sum;
@@ -460,16 +460,21 @@
       buildBoard(st.cells);setStat(st);refreshMoves();
     });
   }
+  var nextGap=0;
   function step(){
     if(over||busy)return Promise.resolve(false);
+    var t0=performance.now();
     return api(botIdx?'/step?search='+BOT_MODES[botIdx]:'/step').then(function(r){
       if(r.done)return false;
       highlight(r.path,false);
-      var pause=Math.max(90,delayMs()*.45);
+      // the slider is a TOTAL per-move budget: subtract the bot's thinking
+      // time, then split what's left between highlight pause and move gap
+      var budget=Math.max(0,delayMs()-(performance.now()-t0)-560*animF());
+      nextGap=budget*.45;
       return new Promise(function(res){
         setTimeout(function(){
           applyResult(r).then(function(){res(!r.over)});
-        },pause);
+        },budget*.55);
       });
     });
   }
@@ -556,7 +561,9 @@
     api('/state'+botQ('?')).then(function(st){if(!st.err)setStat(st);});
   };
   var speedEl=document.getElementById('speed');
-  var SPEEDS=[900,500,300,150,70,35];
+  var SPEEDS=[900,500,300,150,80,40];
+  // animation scale, sized so animation + pauses fit the per-move budget
+  function animF(){return Math.min(1,Math.max(.06,delayMs()*.65/560))}
   function delayMs(){return SPEEDS[+speedEl.value]}
   function speedUi(){
     speedEl.style.setProperty('--fill',(+speedEl.value/5*100)+'%');
@@ -566,7 +573,7 @@
   function loop(){
     if(!playing)return;
     step().then(function(go){
-      if(go&&playing)setTimeout(loop,Math.max(30,delayMs()*.35));
+      if(go&&playing)setTimeout(loop,nextGap);
       else{playing=false;document.getElementById('play').textContent='Play';}
     });
   }
