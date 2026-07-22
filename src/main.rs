@@ -344,12 +344,17 @@ fn cmd_ntuple(args: &[String]) {
         })
         .unwrap_or([96, 768]);
     let cfg = integer_snake::ntuple::NetConfig {
-        alphabet: if arg_val(args, "--alphabet").as_deref() == Some("fine") {
-            integer_snake::ntuple::Alphabet::Fine
-        } else if arg_val(args, "--grow").is_some_and(|g| g.contains("alphabet")) {
-            integer_snake::ntuple::Alphabet::Coarse
-        } else {
-            integer_snake::ntuple::Alphabet::Base
+        alphabet: match arg_val(args, "--alphabet").as_deref() {
+            Some("fine") => integer_snake::ntuple::Alphabet::Fine,
+            Some("slim") => integer_snake::ntuple::Alphabet::Slim,
+            Some("slim89") => integer_snake::ntuple::Alphabet::Slim89,
+            _ => {
+                if arg_val(args, "--grow").is_some_and(|g| g.contains("alphabet")) {
+                    integer_snake::ntuple::Alphabet::Coarse
+                } else {
+                    integer_snake::ntuple::Alphabet::Base
+                }
+            }
         },
         with_2x3: !args.iter().any(|a| a == "--no-2x3"),
         pos_2x3: args.iter().any(|a| a == "--pos-2x3"),
@@ -361,6 +366,31 @@ fn cmd_ntuple(args: &[String]) {
             .and_then(|v| v.parse().ok())
             .unwrap_or(1),
         stage_thresholds,
+        extra: {
+            use integer_snake::ntuple::*;
+            arg_val(args, "--extra")
+                .map(|v| {
+                    v.split(',')
+                        .map(|f| match f {
+                            "bigL" => EX_BIGL,
+                            "x" => EX_X,
+                            "stair6" => EX_STAIR6,
+                            "gated12" => EX_GATED12,
+                            "avgdisp" => EX_AVGDISP,
+                            "blobtier" => EX_BLOBTIER,
+                            "blobalpha" => EX_BLOBALPHA,
+                            "blob2" => EX_BLOB2,
+                            "freefield" => EX_FREEFIELD,
+                            "eqpairs" => EX_EQPAIRS,
+                            "pathtier" => EX_PATHTIER,
+                            "pathalpha" => EX_PATHALPHA,
+                            "path2" => EX_PATH2,
+                            other => panic!("unknown --extra flag {other}"),
+                        })
+                        .fold(0, |a, b| a | b)
+                })
+                .unwrap_or(0)
+        },
     };
     let lambda: f32 = arg_val(args, "--lambda")
         .and_then(|v| v.parse().ok())
@@ -417,6 +447,22 @@ fn cmd_ntuple(args: &[String]) {
         alpha,
         net.cfg
     );
+    if let Some(spec) = arg_val(args, "--compare-codes") {
+        let v: Vec<u8> = spec.split(':').filter_map(|x| x.parse().ok()).collect();
+        assert_eq!(v.len(), 3, "--compare-codes a:b:c");
+        println!(
+            "comparing codes {} vs {} vs {} (per tuple table):",
+            v[0], v[1], v[2]
+        );
+        println!("table  triples   corr(a,b) corr(a,c) corr(b,c)  m|a-b|  m|a-c|  w_std");
+        for (t, n, cab, cac, cbc, dab, dac, wstd) in net.compare_codes(v[0], v[1], v[2]) {
+            println!(
+                "  t{:<3} {:>9}  {:>8.3} {:>9.3} {:>9.3}  {:>6.2}  {:>6.2}  {:>6.2}",
+                t, n, cab, cac, cbc, dab, dac, wstd
+            );
+        }
+        return;
+    }
     if args.iter().any(|a| a == "--show-global") {
         // decode the learned top-2 position table: which big-tile pair
         // geometries the net values most and least (canonical entries only)
@@ -531,7 +577,28 @@ fn cmd_ntuple(args: &[String]) {
                     })
                     .collect()
             }
-            None => integer_snake::ntuple::eval_scores(&net, eval_seed0, eval_games),
+            None => {
+                let pairs = integer_snake::ntuple::eval_scores_tiles(&net, eval_seed0, eval_games);
+                if args.iter().any(|a| a == "--tiles") {
+                    let mut hist: std::collections::BTreeMap<u64, u32> = Default::default();
+                    for (_, t) in &pairs {
+                        *hist.entry(*t).or_default() += 1;
+                    }
+                    println!("max-tile distribution over {} games:", pairs.len());
+                    let n = pairs.len() as f64;
+                    let mut cum = 0.0;
+                    for (t, c) in hist.iter().rev() {
+                        cum += *c as f64 / n * 100.0;
+                        println!(
+                            "  {:>6}: {:>5.1}%  (cum >= {:.1}%)",
+                            t,
+                            *c as f64 / n * 100.0,
+                            cum
+                        );
+                    }
+                }
+                pairs.into_iter().map(|p| p.0).collect()
+            }
         };
         sc.sort_unstable();
         let pct = |p: f64| sc[((sc.len() - 1) as f64 * p) as usize];

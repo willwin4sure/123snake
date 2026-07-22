@@ -6,7 +6,7 @@
 //! tables learn the expectation over refills implicitly, so training never
 //! enumerates the 3^(k-1) refill outcomes.
 
-use crate::game::{idx, rc, Board, Move, Mulberry32, CELLS, MOVE_CAP, N};
+use crate::game::{idx, neighbors, rc, Board, Move, Mulberry32, CELLS, MOVE_CAP, N};
 
 /// Base cell alphabet: 0..=3 exact 1/2/3/4, 4..=18 ladder tiers 6*2^0..6*2^14
 /// (saturating), 19 pow2 >=8, 20 nine-family 9*2^k, 21 other trash,
@@ -98,11 +98,46 @@ pub const COARSE_OF_BASE: [u8; 23] = [
     11, // pending
 ];
 
+/// Slim alphabet (18): tile histogram shows games top out at 384, so all
+/// ladder >= 3072 folds into one "large ladder" code.
+pub fn encode_cell_slim(v: u64) -> u8 {
+    let b = encode_cell(v);
+    match b {
+        0..=12 => b,   // 1,2,3,4, ladder 6..1536
+        13..=18 => 13, // large ladder (3072+)
+        19 => 14,      // pow2 >= 8
+        20 => 15,      // nine family
+        21 => 16,      // trash
+        _ => 17,       // pending
+    }
+}
+
+/// Slim89 (20): slim plus exact 8 and exact 9 split from their buckets.
+pub fn encode_cell_slim89(v: u64) -> u8 {
+    if v == 8 {
+        return 14;
+    }
+    if v == 9 {
+        return 16;
+    }
+    let b = encode_cell(v);
+    match b {
+        0..=12 => b,
+        13..=18 => 13,
+        19 => 15, // pow2 >= 16
+        20 => 17, // nine >= 18
+        21 => 18, // trash
+        _ => 19,  // pending
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Alphabet {
     Base,
     Fine,
     Coarse,
+    Slim,
+    Slim89,
 }
 
 impl Alphabet {
@@ -111,6 +146,8 @@ impl Alphabet {
             Alphabet::Base => 23,
             Alphabet::Fine => 31,
             Alphabet::Coarse => 12,
+            Alphabet::Slim => 18,
+            Alphabet::Slim89 => 20,
         }
     }
     pub fn pending(self) -> u8 {
@@ -121,6 +158,19 @@ impl Alphabet {
             Alphabet::Base => encode_cell(v),
             Alphabet::Fine => encode_cell_fine(v),
             Alphabet::Coarse => encode_cell_coarse(v),
+            Alphabet::Slim => encode_cell_slim(v),
+            Alphabet::Slim89 => encode_cell_slim89(v),
+        }
+    }
+
+    /// Whether a code denotes one exact value (needed for same-value
+    /// blob/path features; bucket codes cannot prove equality).
+    pub fn is_exact(self, c: u8) -> bool {
+        match self {
+            Alphabet::Base | Alphabet::Fine => c <= 18,
+            Alphabet::Coarse => c <= 3,
+            Alphabet::Slim => c <= 12,
+            Alphabet::Slim89 => c <= 12 || c == 14 || c == 16,
         }
     }
 }
@@ -142,6 +192,9 @@ pub struct NetConfig {
     /// (a) symmetry-canonical positions of the two largest tiles (625
     /// entries), (b) big-tile dispersion bucket x max-tile tier (160).
     pub global: bool,
+    /// Extra-feature bitmask (EX_* constants): new shapes, gated/averaged
+    /// global variants, blob / path / census features.
+    pub extra: u32,
     /// Gated global tables: top-2 pair and top-3 triple positions, active
     /// only when the tiles are genuinely big (mag >= 24); plus dispersion.
     pub global2: bool,
@@ -163,6 +216,7 @@ impl NetConfig {
             diagonals: false,
             global: false,
             global2: false,
+            extra: 0,
             stages: 1,
             stage_thresholds: [96, 768],
         }
@@ -204,6 +258,61 @@ pub const G_PLUS: u8 = 2;
 pub const G_STAIR: u8 = 3;
 pub const G_DIAG: u8 = 4;
 pub const G_BLK23: u8 = 5;
+pub const G_BIGL: u8 = 6;
+pub const G_X: u8 = 7;
+pub const G_STAIR6: u8 = 8;
+pub const N_GROUPS: usize = 9;
+
+/// Extra-feature bitmask (cfg.extra).
+pub const EX_BIGL: u32 = 1;
+pub const EX_X: u32 = 2;
+pub const EX_STAIR6: u32 = 4;
+pub const EX_GATED12: u32 = 8;
+pub const EX_AVGDISP: u32 = 16;
+pub const EX_BLOBTIER: u32 = 32;
+pub const EX_BLOBALPHA: u32 = 64;
+pub const EX_BLOB2: u32 = 128;
+pub const EX_FREEFIELD: u32 = 256;
+pub const EX_EQPAIRS: u32 = 512;
+pub const EX_PATHTIER: u32 = 1024;
+pub const EX_PATHALPHA: u32 = 2048;
+pub const EX_PATH2: u32 = 4096;
+
+/// Global feature kinds, in table order.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GKind {
+    Pair,
+    PairGated(u32),
+    PairGated12,
+    Disp,
+    DispAvg,
+    Top3Gated,
+    BlobTier,
+    BlobAlpha,
+    Blob2,
+    FreeField,
+    EqPairs,
+    PathTier,
+    PathAlpha,
+    Path2,
+}
+
+impl GKind {
+    fn table_len(self, m: usize) -> usize {
+        match self {
+            GKind::Pair => CELLS * CELLS,
+            GKind::PairGated(_) | GKind::PairGated12 => CELLS * CELLS + 1,
+            GKind::Disp => 20 * 8,
+            GKind::DispAvg => 10 * 8,
+            GKind::Top3Gated => CELLS * CELLS * CELLS + 1,
+            GKind::BlobTier | GKind::PathTier => 11 * 8,
+            GKind::BlobAlpha | GKind::PathAlpha => 11 * m,
+            GKind::Blob2 | GKind::Path2 => 6 * m * 6 * m,
+            GKind::FreeField => 26,
+            GKind::EqPairs => 25,
+        }
+    }
+}
 
 /// A symmetric image of a base tuple: fixed cell list into a shared table.
 struct Image {
@@ -232,7 +341,8 @@ const SAVE_MAGIC_V3: u32 = 0x4E54_5633; // "NTV3": adds the diagonals flag
 const SAVE_MAGIC_V4: u32 = 0x4E54_5634; // "NTV4": adds the global flag
 const SAVE_MAGIC_V5: u32 = 0x4E54_5635; // "NTV5": adds the stage count
 const SAVE_MAGIC_V6: u32 = 0x4E54_5636; // "NTV6": adds the global2 flag
-const SAVE_MAGIC: u32 = 0x4E54_5637; // "NTV7": adds stage thresholds
+const SAVE_MAGIC_V7: u32 = 0x4E54_5637; // "NTV7": adds stage thresholds
+const SAVE_MAGIC: u32 = 0x4E54_5638; // "NTV8": alphabet id + extras mask
 
 /// Approximate magnitude of a cell code, for ranking "largest tiles" in the
 /// global features. Exact on spawns and the ladder (which dominates big
@@ -265,6 +375,26 @@ fn code_mag(c: u8, a: Alphabet) -> u32 {
             10 => 33,
             _ => 0,
         },
+        Alphabet::Slim => match c {
+            0..=3 => c as u32 + 1,
+            4..=12 => 6u32 << (c - 4),
+            13 => 3072,
+            14 => 16,
+            15 => 36,
+            16 => 30,
+            _ => 0,
+        },
+        Alphabet::Slim89 => match c {
+            0..=3 => c as u32 + 1,
+            4..=12 => 6u32 << (c - 4),
+            13 => 3072,
+            14 => 8,
+            15 => 32,
+            16 => 9,
+            17 => 36,
+            18 => 30,
+            _ => 0,
+        },
     }
 }
 
@@ -276,6 +406,7 @@ pub struct NTupleNet {
     m: usize,
     /// Number of trailing tables (per stage) that are global features.
     n_globals: usize,
+    gkinds: Vec<GKind>,
     /// Tables per stage; stage s uses tables[s*ntab_stage..(s+1)*ntab_stage].
     ntab_stage: usize,
     /// Whether promotion enabled and which stages have been initialized.
@@ -285,7 +416,7 @@ pub struct NTupleNet {
     /// until the trainer activates later stages).
     pub stage_cap: usize,
     /// Active shape groups (progressive growth flips these on).
-    active: [bool; 6],
+    active: [bool; N_GROUPS],
     n_active_images: usize,
     /// Cells-per-tuple for each table (0 = global feature table).
     arity: Vec<u8>,
@@ -370,6 +501,48 @@ impl NTupleNet {
                 add_base(&mut images, cells, tables.len() - 1, G_STAIR);
             }
         }
+        // big Ls: 5-cell corner hooks, 6 orbit reps cover all 36 placements
+        if cfg.extra & EX_BIGL != 0 {
+            let reps: [[(usize, usize); 5]; 6] = [
+                [(0, 0), (0, 1), (0, 2), (1, 0), (2, 0)],
+                [(0, 0), (0, 1), (0, 2), (1, 2), (2, 2)],
+                [(0, 1), (0, 2), (0, 3), (1, 1), (2, 1)],
+                [(0, 1), (1, 1), (2, 1), (2, 2), (2, 3)],
+                [(0, 2), (1, 2), (2, 0), (2, 1), (2, 2)],
+                [(1, 1), (1, 2), (1, 3), (2, 1), (3, 1)],
+            ];
+            for cells in &reps {
+                tables.push(Lut::new(len5));
+                arity.push(5);
+                add_base(&mut images, cells, tables.len() - 1, G_BIGL);
+            }
+        }
+        // X shapes: diagonal cross, 3 orbit reps cover all 9 placements
+        if cfg.extra & EX_X != 0 {
+            let reps: [[(usize, usize); 5]; 3] = [
+                [(0, 0), (0, 2), (1, 1), (2, 0), (2, 2)],
+                [(0, 1), (0, 3), (1, 2), (2, 1), (2, 3)],
+                [(1, 1), (1, 3), (2, 2), (3, 1), (3, 3)],
+            ];
+            for cells in &reps {
+                tables.push(Lut::new(len5));
+                arity.push(5);
+                add_base(&mut images, cells, tables.len() - 1, G_X);
+            }
+        }
+        // 6-cell staircases: 3 orbit reps cover all 24 placements
+        if cfg.extra & EX_STAIR6 != 0 {
+            let reps: [[(usize, usize); 6]; 3] = [
+                [(0, 0), (0, 1), (1, 1), (1, 2), (2, 2), (2, 3)],
+                [(0, 1), (0, 2), (1, 2), (1, 3), (2, 3), (2, 4)],
+                [(0, 1), (1, 1), (1, 2), (2, 2), (2, 3), (3, 3)],
+            ];
+            for cells in &reps {
+                tables.push(Lut::new(m.pow(6)));
+                arity.push(6);
+                add_base(&mut images, cells, tables.len() - 1, G_STAIR6);
+            }
+        }
         // 2x3 blocks: the 24 placements (both orientations) decompose into 4
         // orbits under dihedral-8 (two of size 8, two of size 4); positional
         // per-orbit tables, or one shared translation-invariant table
@@ -399,23 +572,43 @@ impl NTupleNet {
                 add_base(&mut images, cells, table, G_BLK23);
             }
         }
-        let mut n_globals = 0;
+        let mut gkinds: Vec<GKind> = Vec::new();
         if cfg.global {
-            tables.push(Lut::new(CELLS * CELLS)); // top-2 positions, canonical
-            tables.push(Lut::new(20 * 8)); // dispersion bucket x max tier
-            arity.push(0);
-            arity.push(0);
-            n_globals += 2;
+            gkinds.push(if cfg.extra & EX_GATED12 != 0 {
+                GKind::PairGated12
+            } else {
+                GKind::Pair
+            });
+            gkinds.push(if cfg.extra & EX_AVGDISP != 0 {
+                GKind::DispAvg
+            } else {
+                GKind::Disp
+            });
         }
         if cfg.global2 {
-            tables.push(Lut::new(CELLS * CELLS + 1)); // gated top-2 (+inactive)
-            tables.push(Lut::new(CELLS * CELLS * CELLS + 1)); // gated top-3
-            tables.push(Lut::new(20 * 8)); // dispersion bucket x max tier
-            arity.push(0);
-            arity.push(0);
-            arity.push(0);
-            n_globals += 3;
+            gkinds.push(GKind::PairGated(24));
+            gkinds.push(GKind::Top3Gated);
+            gkinds.push(GKind::Disp);
         }
+        for (bit, k) in [
+            (EX_BLOBTIER, GKind::BlobTier),
+            (EX_BLOBALPHA, GKind::BlobAlpha),
+            (EX_BLOB2, GKind::Blob2),
+            (EX_FREEFIELD, GKind::FreeField),
+            (EX_EQPAIRS, GKind::EqPairs),
+            (EX_PATHTIER, GKind::PathTier),
+            (EX_PATHALPHA, GKind::PathAlpha),
+            (EX_PATH2, GKind::Path2),
+        ] {
+            if cfg.extra & bit != 0 {
+                gkinds.push(k);
+            }
+        }
+        for k in &gkinds {
+            tables.push(Lut::new(k.table_len(m)));
+            arity.push(0);
+        }
+        let n_globals = gkinds.len();
         // multi-stage: replicate the whole per-stage table set
         let ntab_stage = tables.len();
         assert!(cfg.stages == 1 || cfg.stages == 3, "stages must be 1 or 3");
@@ -448,11 +641,12 @@ impl NTupleNet {
             cfg,
             m,
             n_globals,
+            gkinds,
             ntab_stage,
             promote: false,
             stage_ready,
             stage_cap: cfg.stages - 1,
-            active: [true; 6],
+            active: [true; N_GROUPS],
             n_active_images,
             arity,
             perms,
@@ -512,7 +706,7 @@ impl NTupleNet {
     /// Progressive growth: deactivate every group not in `groups` (their
     /// zero-init tables sit untouched until activated).
     pub fn set_active_groups(&mut self, groups: &[u8]) {
-        self.active = [false; 6];
+        self.active = [false; N_GROUPS];
         for &g in groups {
             self.active[g as usize] = true;
         }
@@ -524,7 +718,7 @@ impl NTupleNet {
         self.recount_active();
     }
 
-    pub fn active_groups(&self) -> [bool; 6] {
+    pub fn active_groups(&self) -> [bool; N_GROUPS] {
         self.active
     }
 
@@ -653,33 +847,254 @@ impl NTupleNet {
         disp.min(19) * 8 + tier
     }
 
-    /// Indices into the active global tables, in table order.
-    fn global_indices(&self, codes: &[u8; CELLS]) -> ([usize; 5], usize) {
+    /// Same-value blobs (connected components of equal exactly-coded cells),
+    /// as (code, size, longest simple path within the blob), sorted by size
+    /// descending, plus the blob cell masks for adjacency tests.
+    fn blobs(&self, codes: &[u8; CELLS]) -> Vec<(u8, u8, u8, u32, u32)> {
         let a = self.cfg.alphabet;
-        let mags: Vec<u32> = codes.iter().map(|&c| code_mag(c, a)).collect();
-        let mut out = [0usize; 5];
-        let mut n = 0;
-        if self.cfg.global {
-            out[n] = self.canonical_topk(&mags, 2);
-            out[n + 1] = Self::dispersion_index(&mags);
-            n += 2;
+        let mut seen = 0u32;
+        let mut out: Vec<(u8, u8, u8, u32, u32)> = Vec::new();
+        for start in 0..CELLS {
+            if seen & (1 << start) != 0 || !a.is_exact(codes[start]) {
+                continue;
+            }
+            let c = codes[start];
+            let mut mask = 0u32;
+            let mut stack = vec![start];
+            while let Some(i) = stack.pop() {
+                if mask & (1 << i) != 0 {
+                    continue;
+                }
+                mask |= 1 << i;
+                neighbors(i, |nb| {
+                    if codes[nb] == c && mask & (1 << nb) == 0 {
+                        stack.push(nb);
+                    }
+                });
+            }
+            seen |= mask;
+            let size = mask.count_ones() as u8;
+            let lp = Self::longest_path(mask);
+            // canonical mask key: minimum over dihedral transforms, so blob
+            // ordering ties break identically on symmetric boards
+            let ckey = self
+                .perms
+                .iter()
+                .map(|p| {
+                    let mut m2 = 0u32;
+                    for i in 0..CELLS {
+                        if mask & (1 << i) != 0 {
+                            m2 |= 1 << p[i];
+                        }
+                    }
+                    m2
+                })
+                .min()
+                .unwrap();
+            out.push((c, size, lp, mask, ckey));
         }
-        if self.cfg.global2 {
-            // sizes of the top three tiles (unsorted scan is fine for gates)
-            let mut sorted = mags.clone();
-            sorted.sort_unstable_by(|x, y| y.cmp(x));
-            out[n] = if sorted[1] >= 24 {
-                self.canonical_topk(&mags, 2)
-            } else {
-                CELLS * CELLS // inactive
+        out.sort_by(|x, y| {
+            y.1.cmp(&x.1)
+                .then(x.0.cmp(&y.0))
+                .then(y.2.cmp(&x.2))
+                .then(x.4.cmp(&y.4))
+        });
+        out
+    }
+
+    /// Longest simple path (in cells) within a cell mask, DFS with a budget.
+    fn longest_path(mask: u32) -> u8 {
+        fn dfs(cur: usize, visited: u32, mask: u32, budget: &mut u32) -> u8 {
+            if *budget == 0 {
+                return 1;
+            }
+            *budget -= 1;
+            let mut best = 1u8;
+            neighbors(cur, |nb| {
+                if mask & (1 << nb) != 0 && visited & (1 << nb) == 0 {
+                    let l = 1 + dfs(nb, visited | (1 << nb), mask, budget);
+                    if l > best {
+                        best = l;
+                    }
+                }
+            });
+            best
+        }
+        let size = mask.count_ones() as u8;
+        if size <= 2 {
+            return size;
+        }
+        let mut budget = 20_000u32;
+        let mut best = 1u8;
+        for i in 0..CELLS {
+            if mask & (1 << i) != 0 {
+                let l = dfs(i, 1 << i, mask, &mut budget);
+                if l > best {
+                    best = l;
+                }
+            }
+        }
+        best.min(size)
+    }
+
+    fn mask_adjacent(m1: u32, m2: u32) -> bool {
+        if m1 & m2 != 0 {
+            return true;
+        }
+        for i in 0..CELLS {
+            if m1 & (1 << i) != 0 {
+                let mut adj = false;
+                neighbors(i, |nb| {
+                    if m2 & (1 << nb) != 0 {
+                        adj = true;
+                    }
+                });
+                if adj {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Indices into the active global tables, in table order.
+    fn global_indices(&self, codes: &[u8; CELLS]) -> ([usize; 8], usize) {
+        let a = self.cfg.alphabet;
+        let m = self.m;
+        let mags: Vec<u32> = codes.iter().map(|&c| code_mag(c, a)).collect();
+        let maxmag = *mags.iter().max().unwrap_or(&1);
+        let tier = (32 - (maxmag.max(3) / 3).leading_zeros()).min(7) as usize;
+        let mut sorted = mags.clone();
+        sorted.sort_unstable_by(|x, y| y.cmp(x));
+        let mut blobs_c: Option<Vec<(u8, u8, u8, u32, u32)>> = None;
+        let mut out = [0usize; 8];
+        let mut n = 0;
+        for k in &self.gkinds {
+            out[n] = match *k {
+                GKind::Pair => self.canonical_topk(&mags, 2),
+                GKind::PairGated12 => {
+                    if sorted[1] >= 12 {
+                        self.canonical_topk(&mags, 2)
+                    } else {
+                        CELLS * CELLS
+                    }
+                }
+                GKind::PairGated(t) => {
+                    if sorted[1] >= t {
+                        self.canonical_topk(&mags, 2)
+                    } else {
+                        CELLS * CELLS
+                    }
+                }
+                GKind::Top3Gated => {
+                    if sorted[2] >= 24 {
+                        self.canonical_topk(&mags, 3)
+                    } else {
+                        CELLS * CELLS * CELLS
+                    }
+                }
+                GKind::Disp => Self::dispersion_index(&mags),
+                GKind::DispAvg => {
+                    let big: Vec<usize> = (0..CELLS).filter(|&i| mags[i] >= 48).collect();
+                    let mut sum = 0usize;
+                    let mut np = 0usize;
+                    for i in 0..big.len() {
+                        for j in i + 1..big.len() {
+                            let (r1, c1) = rc(big[i]);
+                            let (r2, c2) = rc(big[j]);
+                            sum += r1.abs_diff(r2) + c1.abs_diff(c2);
+                            np += 1;
+                        }
+                    }
+                    let avg = if np > 0 { (sum + np / 2) / np } else { 0 };
+                    avg.min(9) * 8 + tier
+                }
+                GKind::BlobTier
+                | GKind::BlobAlpha
+                | GKind::Blob2
+                | GKind::PathTier
+                | GKind::PathAlpha
+                | GKind::Path2 => {
+                    let bl = blobs_c.get_or_insert_with(|| self.blobs(codes));
+                    match *k {
+                        GKind::BlobTier => {
+                            let sz = bl.first().map_or(0, |b| b.1) as usize;
+                            sz.min(10) * 8 + tier
+                        }
+                        GKind::BlobAlpha => {
+                            let (c, sz) = bl.first().map_or((0u8, 0u8), |b| (b.0, b.1));
+                            (sz as usize).min(10) * m + c as usize
+                        }
+                        GKind::Blob2 => {
+                            let (c1, s1) = bl.first().map_or((0u8, 0u8), |b| (b.0, b.1));
+                            let (c2, s2) = bl.get(1).map_or((0u8, 0u8), |b| (b.0, b.1));
+                            (((s1 as usize).min(5) * m + c1 as usize) * 6 + (s2 as usize).min(5))
+                                * m
+                                + c2 as usize
+                        }
+                        GKind::PathTier => {
+                            let lp = bl.iter().map(|b| b.2).max().unwrap_or(0) as usize;
+                            lp.min(10) * 8 + tier
+                        }
+                        GKind::PathAlpha => {
+                            let best = bl
+                                .iter()
+                                .max_by_key(|b| {
+                                    (b.2, std::cmp::Reverse(b.0), std::cmp::Reverse(b.4))
+                                })
+                                .map_or((0u8, 0u8), |b| (b.0, b.2));
+                            (best.1 as usize).min(10) * m + best.0 as usize
+                        }
+                        GKind::Path2 => {
+                            let b1 = bl
+                                .iter()
+                                .max_by_key(|b| {
+                                    (b.2, std::cmp::Reverse(b.0), std::cmp::Reverse(b.4))
+                                })
+                                .cloned();
+                            let (c1, l1, m1) = b1.map_or((0u8, 0u8, 0u32), |b| (b.0, b.2, b.3));
+                            // second: different value OR fully non-adjacent
+                            let b2 = bl
+                                .iter()
+                                .filter(|b| {
+                                    !(b.0 == c1 && b.3 == m1)
+                                        && (b.0 != c1 || !Self::mask_adjacent(b.3, m1))
+                                })
+                                .max_by_key(|b| {
+                                    (b.2, std::cmp::Reverse(b.0), std::cmp::Reverse(b.4))
+                                });
+                            let (c2, l2) = b2.map_or((0u8, 0u8), |b| (b.0, b.2));
+                            (((l1 as usize).min(5) * m + c1 as usize) * 6 + (l2 as usize).min(5))
+                                * m
+                                + c2 as usize
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                GKind::FreeField => codes
+                    .iter()
+                    .filter(|&&c| a.is_exact(c) && code_mag(c, a) <= 6)
+                    .count(),
+                GKind::EqPairs => {
+                    let mut pairs = 0usize;
+                    for r in 0..N {
+                        for c in 0..N {
+                            let i = idx(r, c);
+                            if !a.is_exact(codes[i]) {
+                                continue;
+                            }
+                            if c + 1 < N && codes[idx(r, c + 1)] == codes[i] {
+                                pairs += 1;
+                            }
+                            if r + 1 < N && codes[idx(r + 1, c)] == codes[i] {
+                                pairs += 1;
+                            }
+                        }
+                    }
+                    pairs.min(24)
+                }
             };
-            out[n + 1] = if sorted[2] >= 24 {
-                self.canonical_topk(&mags, 3)
-            } else {
-                CELLS * CELLS * CELLS // inactive
-            };
-            out[n + 2] = Self::dispersion_index(&mags);
-            n += 3;
+            n += 1;
         }
         (out, n)
     }
@@ -811,6 +1226,102 @@ impl NTupleNet {
         t.w.iter().zip(t.a.iter()).map(|(&w, &a)| (w, a)).collect()
     }
 
+    /// Compare learned values across three cell codes: for every visited
+    /// context that exists with each code substituted, accumulate pairwise
+    /// stats. Returns (table, n_triples, corr_ab, corr_ac, corr_bc,
+    /// mean|a-b|, mean|a-c|, w_std) per tuple table.
+    #[allow(clippy::type_complexity)]
+    pub fn compare_codes(
+        &self,
+        ca: u8,
+        cb: u8,
+        cc: u8,
+    ) -> Vec<(usize, u64, f64, f64, f64, f64, f64, f64)> {
+        let m = self.m;
+        let mut out = Vec::new();
+        for (t, lut) in self.tables.iter().enumerate().take(self.ntab_stage) {
+            let k = self.arity[t] as usize;
+            if k == 0 {
+                continue;
+            }
+            let mut n = 0u64;
+            let (mut sa, mut sb, mut sc) = (0.0f64, 0.0, 0.0);
+            let (mut saa, mut sbb, mut scc) = (0.0f64, 0.0, 0.0);
+            let (mut sab, mut sac, mut sbc) = (0.0f64, 0.0, 0.0);
+            let (mut dab, mut dac) = (0.0f64, 0.0);
+            let mut wsum = 0.0f64;
+            let mut wsq = 0.0f64;
+            let mut wn = 0u64;
+            for i in 0..lut.w.len() {
+                let w = lut.w[i] as f64;
+                if w != 0.0 {
+                    wsum += w;
+                    wsq += w * w;
+                    wn += 1;
+                }
+                // find positions holding code ca
+                let mut rest = i;
+                for d in (0..k).rev() {
+                    let digit = (rest % m) as u8;
+                    rest /= m;
+                    if digit != ca {
+                        continue;
+                    }
+                    let stride = m.pow((k - 1 - d) as u32);
+                    let ib = i + (cb as usize - ca as usize) * stride;
+                    let ic = i + (cc as usize - ca as usize) * stride;
+                    let (wa, wb, wc) = (lut.w[i] as f64, lut.w[ib] as f64, lut.w[ic] as f64);
+                    if wa == 0.0 || wb == 0.0 || wc == 0.0 {
+                        continue;
+                    }
+                    n += 1;
+                    sa += wa;
+                    sb += wb;
+                    sc += wc;
+                    saa += wa * wa;
+                    sbb += wb * wb;
+                    scc += wc * wc;
+                    sab += wa * wb;
+                    sac += wa * wc;
+                    sbc += wb * wc;
+                    dab += (wa - wb).abs();
+                    dac += (wa - wc).abs();
+                }
+            }
+            if n < 100 {
+                continue;
+            }
+            let nf = n as f64;
+            let corr = |sxy: f64, sx: f64, sy: f64, sxx: f64, syy: f64| {
+                let cov = sxy / nf - (sx / nf) * (sy / nf);
+                let vx = sxx / nf - (sx / nf) * (sx / nf);
+                let vy = syy / nf - (sy / nf) * (sy / nf);
+                if vx <= 0.0 || vy <= 0.0 {
+                    return 0.0;
+                }
+                cov / (vx * vy).sqrt()
+            };
+            let wstd = if wn > 0 {
+                (wsq / wn as f64 - (wsum / wn as f64).powi(2))
+                    .max(0.0)
+                    .sqrt()
+            } else {
+                0.0
+            };
+            out.push((
+                t,
+                n,
+                corr(sab, sa, sb, saa, sbb),
+                corr(sac, sa, sc, saa, scc),
+                corr(sbc, sb, sc, sbb, scc),
+                dab / nf,
+                dac / nf,
+                wstd,
+            ));
+        }
+        out
+    }
+
     pub fn params(&self) -> usize {
         self.tables.iter().map(|t| t.w.len()).sum()
     }
@@ -837,8 +1348,14 @@ impl NTupleNet {
         let f = std::fs::File::create(path)?;
         let mut wr = std::io::BufWriter::new(f);
         wr.write_all(&SAVE_MAGIC.to_le_bytes())?;
-        let fine = u32::from(self.cfg.alphabet == Alphabet::Fine);
-        wr.write_all(&fine.to_le_bytes())?;
+        let aid: u32 = match self.cfg.alphabet {
+            Alphabet::Base => 0,
+            Alphabet::Fine => 1,
+            Alphabet::Coarse => 2,
+            Alphabet::Slim => 3,
+            Alphabet::Slim89 => 4,
+        };
+        wr.write_all(&aid.to_le_bytes())?;
         wr.write_all(&u32::from(self.cfg.with_2x3).to_le_bytes())?;
         wr.write_all(&u32::from(self.cfg.pos_2x3).to_le_bytes())?;
         wr.write_all(&u32::from(self.cfg.staircase).to_le_bytes())?;
@@ -848,6 +1365,7 @@ impl NTupleNet {
         wr.write_all(&(self.cfg.stages as u32).to_le_bytes())?;
         wr.write_all(&self.cfg.stage_thresholds[0].to_le_bytes())?;
         wr.write_all(&self.cfg.stage_thresholds[1].to_le_bytes())?;
+        wr.write_all(&self.cfg.extra.to_le_bytes())?;
         wr.write_all(&(self.tables.len() as u32).to_le_bytes())?;
         for t in &self.tables {
             wr.write_all(&(t.w.len() as u64).to_le_bytes())?;
@@ -867,6 +1385,7 @@ impl NTupleNet {
         rd.read_exact(&mut b4)?;
         let first = u32::from_le_bytes(b4);
         let (cfg, ntab) = if first == SAVE_MAGIC
+            || first == SAVE_MAGIC_V7
             || first == SAVE_MAGIC_V6
             || first == SAVE_MAGIC_V5
             || first == SAVE_MAGIC_V4
@@ -877,7 +1396,16 @@ impl NTupleNet {
                 rd.read_exact(&mut b4)?;
                 Ok(u32::from_le_bytes(b4))
             };
-            let alphabet = if word()? != 0 {
+            let aw = word()?;
+            let alphabet = if first >= SAVE_MAGIC {
+                match aw {
+                    1 => Alphabet::Fine,
+                    2 => Alphabet::Coarse,
+                    3 => Alphabet::Slim,
+                    4 => Alphabet::Slim89,
+                    _ => Alphabet::Base,
+                }
+            } else if aw != 0 {
                 Alphabet::Fine
             } else {
                 Alphabet::Base
@@ -905,11 +1433,12 @@ impl NTupleNet {
             } else {
                 1
             };
-            let stage_thresholds = if first >= SAVE_MAGIC {
+            let stage_thresholds = if first >= SAVE_MAGIC_V7 {
                 [word()?, word()?]
             } else {
                 [96, 768]
             };
+            let extra = if first >= SAVE_MAGIC { word()? } else { 0 };
             let ntab = word()? as usize;
             (
                 NetConfig {
@@ -920,6 +1449,7 @@ impl NTupleNet {
                     diagonals,
                     global,
                     global2,
+                    extra,
                     stages,
                     stage_thresholds,
                 },
@@ -1197,13 +1727,21 @@ impl crate::search::Policy for NTupleSearchPolicy {
 
 /// Greedy scores over `n` fresh games (no learning).
 pub fn eval_scores(net: &NTupleNet, seed0: u32, n: u32) -> Vec<u64> {
+    eval_scores_tiles(net, seed0, n)
+        .into_iter()
+        .map(|p| p.0)
+        .collect()
+}
+
+/// (score, max tile) per game.
+pub fn eval_scores_tiles(net: &NTupleNet, seed0: u32, n: u32) -> Vec<(u64, u64)> {
     (0..n)
         .map(|s| {
             let mut b = Board::new_game(seed0 + s);
             while let Some((mv, _, _)) = net.greedy(&b) {
                 b.apply(&mv);
             }
-            b.score
+            (b.score, b.max_tile())
         })
         .collect()
 }
@@ -1390,6 +1928,55 @@ mod tests {
         let v0 = net.value(&codes);
         net.update(&codes, v0 + 100.0);
         assert!(net.value(&codes) > v0, "activated tables must learn");
+    }
+
+    #[test]
+    fn slim_extras_symmetric_and_roundtrip() {
+        let mut cfg = NetConfig::base();
+        cfg.alphabet = Alphabet::Slim;
+        cfg.staircase = true;
+        cfg.extra = EX_BIGL
+            | EX_X
+            | EX_STAIR6
+            | EX_GATED12
+            | EX_AVGDISP
+            | EX_BLOBTIER
+            | EX_BLOBALPHA
+            | EX_BLOB2
+            | EX_FREEFIELD
+            | EX_EQPAIRS
+            | EX_PATHTIER
+            | EX_PATHALPHA
+            | EX_PATH2;
+        let mut net = NTupleNet::new(1.0, cfg);
+        let mut b = Board::new_game(5);
+        for _ in 0..30 {
+            match net.greedy(&b) {
+                Some((mv, r, after)) => {
+                    net.update(&after, r + 40.0);
+                    b.apply(&mv);
+                }
+                None => break,
+            }
+        }
+        let codes = net.encode(&b.cells);
+        let mut tcells = [0u64; CELLS];
+        for r in 0..N {
+            for c in 0..N {
+                tcells[idx(c, r)] = b.cells[idx(r, c)];
+            }
+        }
+        let tcodes = net.encode(&tcells);
+        let (v, tv) = (net.value(&codes), net.value(&tcodes));
+        assert!((v - tv).abs() < 1e-6, "{v} vs {tv}");
+        let path = std::env::temp_dir().join("ntuple-slim-extras.bin");
+        let path = path.to_str().unwrap();
+        net.save(path).unwrap();
+        let loaded = NTupleNet::load(path, 1.0).unwrap();
+        assert_eq!(loaded.cfg.alphabet, Alphabet::Slim);
+        assert_eq!(loaded.cfg.extra, cfg.extra);
+        assert!((loaded.value(&codes) - v).abs() < 1e-6);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
