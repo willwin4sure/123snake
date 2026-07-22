@@ -1,0 +1,10 @@
+#!/bin/sh
+# Run the same checks as CI before anything leaves this machine.
+set -e
+echo "pre-push: cargo fmt --check"
+cargo fmt --check
+echo "pre-push: clippy -D warnings"
+cargo clippy --all-targets --release -- -D warnings
+echo "pre-push: tests"
+cargo test --release --quiet
+echo "pre-push: ok"

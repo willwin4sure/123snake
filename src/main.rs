@@ -317,7 +317,7 @@ fn cmd_serve(args: &[String]) {
 ///                [--eval-every 5000] [--eval-games 100] [--eval-seed0 500000]
 ///                [--save ml/ntuple-v0.bin] [--load file]
 fn cmd_ntuple(args: &[String]) {
-    use integer_snake::ntuple::{eval_greedy, train_game, NTupleNet};
+    use integer_snake::ntuple::{eval_greedy, NTupleNet};
     let games: u32 = arg_val(args, "--games")
         .and_then(|v| v.parse().ok())
         .unwrap_or(100_000);
@@ -564,19 +564,34 @@ fn cmd_ntuple(args: &[String]) {
                     .split(':')
                     .map(|x| x.parse().expect("--exp k:s[:k2:s2...]"))
                     .collect();
-                assert!(nums.len() >= 2 && nums.len() % 2 == 0, "--exp k:s pairs");
+                assert!(
+                    nums.len() >= 2 && nums.len().is_multiple_of(2),
+                    "--exp k:s pairs"
+                );
                 let levels: Vec<(usize, u32)> =
                     nums.chunks(2).map(|c| (c[0] as usize, c[1])).collect();
                 let mut pol = NTupleSearchPolicy::with_levels(net, levels, 99);
-                (0..eval_games)
-                    .map(|g| {
-                        let mut b = Board::new_game(eval_seed0 + g);
-                        while let Some(mv) = pol.choose(&b) {
-                            b.apply(&mv);
-                        }
-                        b.score
-                    })
-                    .collect()
+                let progress = args.iter().any(|a| a == "--progress");
+                let mut out: Vec<u64> = Vec::with_capacity(eval_games as usize);
+                let mut total = 0u64;
+                for g in 0..eval_games {
+                    let mut b = Board::new_game(eval_seed0 + g);
+                    while let Some(mv) = pol.choose(&b) {
+                        b.apply(&mv);
+                    }
+                    total += b.score;
+                    out.push(b.score);
+                    if progress {
+                        eprintln!(
+                            "PROG {} {} {:.1} {}",
+                            g + 1,
+                            eval_games,
+                            total as f64 / (g + 1) as f64,
+                            b.score
+                        );
+                    }
+                }
+                out
             }
             None => {
                 let pairs = integer_snake::ntuple::eval_scores_tiles(&net, eval_seed0, eval_games);

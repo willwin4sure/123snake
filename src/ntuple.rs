@@ -336,6 +336,9 @@ fn dihedral(r: usize, c: usize, t: usize) -> (usize, usize) {
     (r, c)
 }
 
+/// (code, size, longest path, cell mask, canonical mask key)
+type Blob = (u8, u8, u8, u32, u32);
+
 const SAVE_MAGIC_V2: u32 = 0x4E54_5632; // "NTV2"
 const SAVE_MAGIC_V3: u32 = 0x4E54_5633; // "NTV3": adds the diagonals flag
 const SAVE_MAGIC_V4: u32 = 0x4E54_5634; // "NTV4": adds the global flag
@@ -850,10 +853,10 @@ impl NTupleNet {
     /// Same-value blobs (connected components of equal exactly-coded cells),
     /// as (code, size, longest simple path within the blob), sorted by size
     /// descending, plus the blob cell masks for adjacency tests.
-    fn blobs(&self, codes: &[u8; CELLS]) -> Vec<(u8, u8, u8, u32, u32)> {
+    fn blobs(&self, codes: &[u8; CELLS]) -> Vec<Blob> {
         let a = self.cfg.alphabet;
         let mut seen = 0u32;
-        let mut out: Vec<(u8, u8, u8, u32, u32)> = Vec::new();
+        let mut out: Vec<Blob> = Vec::new();
         for start in 0..CELLS {
             if seen & (1 << start) != 0 || !a.is_exact(codes[start]) {
                 continue;
@@ -882,9 +885,9 @@ impl NTupleNet {
                 .iter()
                 .map(|p| {
                     let mut m2 = 0u32;
-                    for i in 0..CELLS {
+                    for (i, &pi) in p.iter().enumerate() {
                         if mask & (1 << i) != 0 {
-                            m2 |= 1 << p[i];
+                            m2 |= 1 << pi;
                         }
                     }
                     m2
@@ -966,7 +969,7 @@ impl NTupleNet {
         let tier = (32 - (maxmag.max(3) / 3).leading_zeros()).min(7) as usize;
         let mut sorted = mags.clone();
         sorted.sort_unstable_by(|x, y| y.cmp(x));
-        let mut blobs_c: Option<Vec<(u8, u8, u8, u32, u32)>> = None;
+        let mut blobs_c: Option<Vec<Blob>> = None;
         let mut out = [0usize; 8];
         let mut n = 0;
         for k in &self.gkinds {
@@ -1006,7 +1009,7 @@ impl NTupleNet {
                             np += 1;
                         }
                     }
-                    let avg = if np > 0 { (sum + np / 2) / np } else { 0 };
+                    let avg = (sum + np / 2).checked_div(np).unwrap_or(0);
                     avg.min(9) * 8 + tier
                 }
                 GKind::BlobTier
