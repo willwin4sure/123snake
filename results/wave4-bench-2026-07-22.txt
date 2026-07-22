@@ -8,3 +8,17 @@ M10-gated-promote | eval n=1000 seed0=15000  mean 2555.5  p10 536  p50 2099  p90
 L10-optimist | eval n=1000 seed0=15000  mean 2613.4  p10 523  p50 2129  p90 5355  p99 8955  max 11447
 O10-bonus | eval n=1000 seed0=15000  mean 2166.3  p10 564  p50 1944  p90 3970  p99 6005  max 8128
 BENCHDONE
+A5-xshape | eval n=1000 seed0=15000  mean 2399.4  p10 483  p50 1950  p90 4962  p99 7853  max 10429
+A7-stair6 | eval n=1000 seed0=15000  mean 2569.3  p10 522  p50 2113  p90 5211  p99 7917  max 11183
+A2-bigL | eval n=1000 seed0=15000  mean 2560.8  p10 472  p50 2090  p90 5161  p99 8161  max 10825
+A1-base @30k | eval n=30000 seed0=15000  mean 2540.0  p10 504  p50 2104  p90 5135  p99 8277  max 13734
+A3-pos23 @30k | eval n=30000 seed0=15000  mean 2640.8  p10 530  p50 2176  p90 5343  p99 8780  max 14121
+A7-stair6 @30k | eval n=30000 seed0=15000  mean 2577.5  p10 516  p50 2138  p90 5216  p99 8495  max 13708
+A2-bigL @30k | eval n=30000 seed0=15000  mean 2606.5  p10 501  p50 2161  p90 5269  p99 8534  max 14174
+A4-slim89 @30k | eval n=30000 seed0=15000  mean 2541.4  p10 511  p50 2098  p90 5125  p99 8344  max 15085
+A6-gated12 @30k | eval n=30000 seed0=15000  mean 2522.9  p10 514  p50 2084  p90 5112  p99 8379  max 14005
+A8-avgdisp @30k | eval n=30000 seed0=15000  mean 2521.0  p10 508  p50 2080  p90 5123  p99 8244  max 13971
+A5-xshape @30k | eval n=30000 seed0=15000  mean 2531.6  p10 497  p50 2079  p90 5151  p99 8363  max 18335
+KE10-a20 @30k | eval n=30000 seed0=15000  mean 2582.7  p10 511  p50 2110  p90 5285  p99 8650  max 14757
+L10-optimist @30k | eval n=30000 seed0=15000  mean 2540.5  p10 523  p50 2119  p90 5092  p99 8183  max 14170
+BENCH30KDONE
