@@ -1746,72 +1746,113 @@ impl NTupleSearchPolicy {
             rng: Mulberry32::new(seed),
         }
     }
+}
 
-    /// Best (move, value) at `level`; `None` if the board is dead.
-    fn best_at(&mut self, b: &Board, level: usize) -> Option<(Move, f64)> {
-        if level >= self.levels.len() {
-            return self
-                .net
-                .greedy(b)
-                .map(|(mv, r, after)| (mv, r + self.net.value(&after)));
-        }
-        let (topk, samples) = self.levels[level];
-        let codes = self.net.encode(&b.cells);
-        let mut scored: Vec<(Move, f64, f64)> = b
-            .legal_moves_capped(MOVE_CAP)
-            .into_iter()
-            .map(|mv| {
-                let v = b.cells[mv.path[0] as usize];
-                let sum = (v * mv.path.len() as u64) as f64;
-                let proxy = sum
-                    + self
-                        .net
-                        .value(&self.net.afterstate(&codes, &mv, sum as u64));
-                (mv, sum, proxy)
-            })
-            .collect();
-        scored.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
-        scored.truncate(topk.max(1));
-        let mut best: Option<(Move, f64)> = None;
-        for (mv, sum, _) in scored {
-            let n_vac = mv.path.len() - 1;
-            let space = 3u64.checked_pow(n_vac as u32);
-            let mut acc = 0.0;
-            let n_eval: u32;
-            if let Some(n) = space.filter(|&n| n <= samples as u64) {
-                // Chance node fits in the sample budget: enumerate the full
-                // refill space (short chains — the common case). Exact
-                // expectation, and cheaper than sampling.
-                n_eval = n as u32;
-                for i in 0..n_eval {
-                    let child = b.apply_with_refills(&mv, &refill_combo(i, n_vac));
-                    acc += self.best_at(&child, level + 1).map_or(0.0, |(_, v)| v);
-                }
-            } else {
-                // Otherwise draw `samples` DISTINCT refill vectors (a uniform
-                // random subset, i.e. sampling without replacement): still
-                // unbiased, strictly lower variance than iid draws.
-                n_eval = samples;
-                let mut seen = std::collections::HashSet::with_capacity(samples as usize);
-                let mut got = 0;
-                while got < samples {
-                    let refills: Vec<u64> = (0..n_vac).map(|_| self.rng.rnd13()).collect();
-                    let key = refills.iter().fold(0u64, |a, &d| a * 3 + (d - 1));
-                    if !seen.insert(key) {
-                        continue;
-                    }
-                    got += 1;
-                    let child = b.apply_with_refills(&mv, &refills);
-                    acc += self.best_at(&child, level + 1).map_or(0.0, |(_, v)| v);
-                }
-            }
-            let val = sum + acc / n_eval as f64;
-            if best.as_ref().is_none_or(|(_, bv)| val > *bv) {
-                best = Some((mv, val));
-            }
-        }
-        best
+/// Best (move, value) of the sampled expectimax at `level`; `None` if the
+/// board is dead. Free function so callers that only borrow a net (e.g.
+/// the lab server) run the identical search.
+fn best_at(
+    net: &NTupleNet,
+    b: &Board,
+    levels: &[(usize, u32)],
+    level: usize,
+    rng: &mut Mulberry32,
+) -> Option<(Move, f64)> {
+    if level >= levels.len() {
+        return net
+            .greedy(b)
+            .map(|(mv, r, after)| (mv, r + net.value(&after)));
     }
+    let (topk, samples) = levels[level];
+    let codes = net.encode(&b.cells);
+    let mut scored: Vec<(Move, f64, f64)> = b
+        .legal_moves_capped(MOVE_CAP)
+        .into_iter()
+        .map(|mv| {
+            let v = b.cells[mv.path[0] as usize];
+            let sum = (v * mv.path.len() as u64) as f64;
+            let proxy = sum + net.value(&net.afterstate(&codes, &mv, sum as u64));
+            (mv, sum, proxy)
+        })
+        .collect();
+    scored.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+    scored.truncate(topk.max(1));
+    let mut best: Option<(Move, f64)> = None;
+    for (mv, sum, _) in scored {
+        let val = chance_value(net, b, &mv, sum, samples, levels, level + 1, rng);
+        if best.as_ref().is_none_or(|(_, bv)| val > *bv) {
+            best = Some((mv, val));
+        }
+    }
+    best
+}
+
+/// `sum + E_refills[value of child at `level`]` for one move. The chance
+/// node is enumerated exactly when the refill space (3^vacated) fits in
+/// `samples` — short chains, the common case, exact AND cheaper — else
+/// estimated from `samples` DISTINCT refill vectors (a uniform random
+/// subset, i.e. sampling without replacement: unbiased, strictly lower
+/// variance than iid draws).
+#[allow(clippy::too_many_arguments)]
+fn chance_value(
+    net: &NTupleNet,
+    b: &Board,
+    mv: &Move,
+    sum: f64,
+    samples: u32,
+    levels: &[(usize, u32)],
+    level: usize,
+    rng: &mut Mulberry32,
+) -> f64 {
+    let n_vac = mv.path.len() - 1;
+    let space = 3u64.checked_pow(n_vac as u32);
+    let mut acc = 0.0;
+    let n_eval: u32;
+    if let Some(n) = space.filter(|&n| n <= samples as u64) {
+        n_eval = n as u32;
+        for i in 0..n_eval {
+            let child = b.apply_with_refills(mv, &refill_combo(i, n_vac));
+            acc += best_at(net, &child, levels, level, rng).map_or(0.0, |(_, v)| v);
+        }
+    } else {
+        n_eval = samples;
+        let mut seen = std::collections::HashSet::with_capacity(samples as usize);
+        let mut got = 0;
+        while got < samples {
+            let refills: Vec<u64> = (0..n_vac).map(|_| rng.rnd13()).collect();
+            let key = refills.iter().fold(0u64, |a, &d| a * 3 + (d - 1));
+            if !seen.insert(key) {
+                continue;
+            }
+            got += 1;
+            let child = b.apply_with_refills(mv, &refills);
+            acc += best_at(net, &child, levels, level, rng).map_or(0.0, |(_, v)| v);
+        }
+    }
+    sum + acc / n_eval as f64
+}
+
+/// Run the multi-level sampled expectimax on a borrowed net.
+pub fn search_best(
+    net: &NTupleNet,
+    b: &Board,
+    levels: &[(usize, u32)],
+    rng: &mut Mulberry32,
+) -> Option<(Move, f64)> {
+    best_at(net, b, levels, 0, rng)
+}
+
+/// Reward + expected best-reply value of one SPECIFIC move (greedy leaf):
+/// the unbiased action-value used by the lab's move/luck meter.
+pub fn sampled_move_value(
+    net: &NTupleNet,
+    b: &Board,
+    mv: &Move,
+    sum: u64,
+    samples: u32,
+    rng: &mut Mulberry32,
+) -> f64 {
+    chance_value(net, b, mv, sum as f64, samples, &[], 0, rng)
 }
 
 impl crate::search::Policy for NTupleSearchPolicy {
@@ -1824,7 +1865,7 @@ impl crate::search::Policy for NTupleSearchPolicy {
         format!("ntuple-exp:{}", spec.join(":"))
     }
     fn choose(&mut self, b: &Board) -> Option<Move> {
-        self.best_at(b, 0).map(|(mv, _)| mv)
+        search_best(&self.net, b, &self.levels, &mut self.rng).map(|(mv, _)| mv)
     }
 }
 

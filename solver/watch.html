@@ -462,7 +462,7 @@
   }
   function step(){
     if(over||busy)return Promise.resolve(false);
-    return api(searchMode?'/step?search=1':'/step').then(function(r){
+    return api(botIdx?'/step?search='+BOT_MODES[botIdx]:'/step').then(function(r){
       if(r.done)return false;
       highlight(r.path,false);
       var pause=Math.max(90,delayMs()*.45);
@@ -541,13 +541,16 @@
   });
 
   // ---- controls ----
-  var searchMode=localStorage.getItem('snakeLabSearch')==='on';
+  var BOT_MODES=['greedy','16:48','32:96'];
+  var botIdx=+(localStorage.getItem('snakeLabBot')||0);
+  if(!localStorage.getItem('snakeLabBot')&&localStorage.getItem('snakeLabSearch')==='on')botIdx=1;
+  if(!(botIdx>=0&&botIdx<BOT_MODES.length))botIdx=0;
   var botBtn=document.getElementById('botmode');
-  function botLabel(){botBtn.textContent=searchMode?'Bot: 16\u00d748':'Bot: greedy'}
+  function botLabel(){botBtn.textContent='Bot: '+(botIdx?BOT_MODES[botIdx].replace(':','\u00d7'):'greedy')}
   botLabel();
   botBtn.onclick=function(){
-    searchMode=!searchMode;
-    localStorage.setItem('snakeLabSearch',searchMode?'on':'off');
+    botIdx=(botIdx+1)%BOT_MODES.length;
+    localStorage.setItem('snakeLabBot',String(botIdx));
     botLabel();
   };
   var speedEl=document.getElementById('speed');

@@ -67,17 +67,7 @@ fn cmd_serve(args: &[String]) {
         rng: &mut Mulberry32,
         s: u32,
     ) -> f64 {
-        let mut acc = 0.0;
-        for _ in 0..s {
-            let refills: Vec<u64> = (0..mv.path.len() - 1).map(|_| rng.rnd13()).collect();
-            let child = b.apply_with_refills(mv, &refills);
-            acc += sum as f64
-                + net
-                    .greedy(&child)
-                    .map(|(_, r, a)| r + net.value(&a))
-                    .unwrap_or(0.0);
-        }
-        acc / s as f64
+        integer_snake::ntuple::sampled_move_value(net, b, mv, sum, s, rng)
     }
     fn sampled_av(
         net: &integer_snake::ntuple::NTupleNet,
@@ -249,33 +239,25 @@ fn cmd_serve(args: &[String]) {
             },
             "/step" => match &mut game {
                 Some(b) if b.has_moves() => {
-                    // search mode: rank by the one-ply proxy, then pick the
-                    // best of the top 16 by 48-sample expectimax (the
-                    // measured test-time-compute sweet spot, +35%)
-                    let (mv, av) = if query.contains("search=1") {
-                        let codes = net.encode(&b.cells);
-                        let mut scored: Vec<(integer_snake::game::Move, u64, f64)> = b
-                            .legal_moves_capped(integer_snake::game::MOVE_CAP)
-                            .into_iter()
-                            .map(|mv| {
-                                let sum = b.cells[mv.path[0] as usize] * mv.path.len() as u64;
-                                let v = sum as f64 + net.value(&net.afterstate(&codes, &mv, sum));
-                                (mv, sum, v)
-                            })
-                            .collect();
-                        scored.sort_by(|x, y| {
-                            y.2.partial_cmp(&x.2).unwrap_or(std::cmp::Ordering::Equal)
+                    // search mode: shared expectimax core (exact-enum chance
+                    // nodes); "search=k:s" picks the spec, "search=1" is the
+                    // legacy alias for 16:48
+                    let levels: Option<Vec<(usize, u32)>> = query
+                        .split('&')
+                        .find_map(|kv| kv.strip_prefix("search="))
+                        .and_then(|v| match v {
+                            "" | "0" => None,
+                            "1" => Some(vec![(16, 48)]),
+                            s => {
+                                let nums: Vec<u32> =
+                                    s.split(':').filter_map(|x| x.parse().ok()).collect();
+                                (nums.len() >= 2 && nums.len().is_multiple_of(2)).then(|| {
+                                    nums.chunks(2).map(|c| (c[0] as usize, c[1])).collect()
+                                })
+                            }
                         });
-                        scored.truncate(16);
-                        scored
-                            .into_iter()
-                            .map(|(mv, sum, _)| {
-                                let v = sampled_av_n(&net, b, &mv, sum, &mut srng, 48);
-                                (mv, v)
-                            })
-                            .max_by(|x, y| {
-                                x.1.partial_cmp(&y.1).unwrap_or(std::cmp::Ordering::Equal)
-                            })
+                    let (mv, av) = if let Some(levels) = levels {
+                        integer_snake::ntuple::search_best(&net, b, &levels, &mut srng)
                             .expect("moves exist")
                     } else {
                         let (mv, _, _) = net.greedy(b).expect("moves exist");
