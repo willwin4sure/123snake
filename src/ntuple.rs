@@ -277,6 +277,11 @@ pub const EX_EQPAIRS: u32 = 512;
 pub const EX_PATHTIER: u32 = 1024;
 pub const EX_PATHALPHA: u32 = 2048;
 pub const EX_PATH2: u32 = 4096;
+pub const EX_BLOB3: u32 = 8192;
+pub const EX_PATH3: u32 = 16384;
+pub const EX_BLOB4: u32 = 32768;
+pub const EX_PATH4: u32 = 65536;
+pub const EX_BP22: u32 = 131072;
 
 /// Global feature kinds, in table order.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -295,6 +300,12 @@ pub enum GKind {
     PathTier,
     PathAlpha,
     Path2,
+    Blob3,
+    Path3,
+    Blob4,
+    Path4,
+    /// Blob2 x Path2 cartesian in one table.
+    BlobPath22,
 }
 
 impl GKind {
@@ -308,6 +319,8 @@ impl GKind {
             GKind::BlobTier | GKind::PathTier => 11 * 8,
             GKind::BlobAlpha | GKind::PathAlpha => 11 * m,
             GKind::Blob2 | GKind::Path2 => 6 * m * 6 * m,
+            GKind::Blob3 | GKind::Path3 => 6 * m * 6 * m * 6 * m,
+            GKind::Blob4 | GKind::Path4 | GKind::BlobPath22 => 6 * m * 6 * m * 6 * m * 6 * m,
             GKind::FreeField => 26,
             GKind::EqPairs => 25,
         }
@@ -603,6 +616,11 @@ impl NTupleNet {
             (EX_PATHTIER, GKind::PathTier),
             (EX_PATHALPHA, GKind::PathAlpha),
             (EX_PATH2, GKind::Path2),
+            (EX_BLOB3, GKind::Blob3),
+            (EX_PATH3, GKind::Path3),
+            (EX_BLOB4, GKind::Blob4),
+            (EX_PATH4, GKind::Path4),
+            (EX_BP22, GKind::BlobPath22),
         ] {
             if cfg.extra & bit != 0 {
                 gkinds.push(k);
@@ -906,6 +924,46 @@ impl NTupleNet {
         out
     }
 
+    /// Index over the top-n blobs as (size bucket 0-5, code) digit pairs.
+    /// Missing blobs encode as (0, 0). Matches Blob2's layout at n=2.
+    fn blob_index_topn(bl: &[Blob], n: usize, m: usize) -> usize {
+        let mut idx = 0usize;
+        for k in 0..n {
+            let (c, s) = bl.get(k).map_or((0u8, 0u8), |b| (b.0, b.1));
+            idx = (idx * 6 + (s as usize).min(5)) * m + c as usize;
+        }
+        idx
+    }
+
+    /// Index over the top-n paths as (length bucket 0-5, code) digit pairs.
+    /// Paths rank by (longest, smaller code, canonical key); each next path
+    /// must be a different value than, or non-adjacent to, every previously
+    /// chosen one. Matches Path2's layout and selection at n=2.
+    fn path_index_topn(bl: &[Blob], n: usize, m: usize) -> usize {
+        let mut chosen: Vec<&Blob> = Vec::new();
+        for _ in 0..n {
+            let cand = bl
+                .iter()
+                .filter(|b| {
+                    chosen.iter().all(|p| {
+                        !(b.0 == p.0 && b.3 == p.3)
+                            && (b.0 != p.0 || !Self::mask_adjacent(b.3, p.3))
+                    })
+                })
+                .max_by_key(|b| (b.2, std::cmp::Reverse(b.0), std::cmp::Reverse(b.4)));
+            match cand {
+                Some(b) => chosen.push(b),
+                None => break,
+            }
+        }
+        let mut idx = 0usize;
+        for k in 0..n {
+            let (c, l) = chosen.get(k).map_or((0u8, 0u8), |b| (b.0, b.2));
+            idx = (idx * 6 + (l as usize).min(5)) * m + c as usize;
+        }
+        idx
+    }
+
     /// Longest simple path (in cells) within a cell mask, DFS with a budget.
     fn longest_path(mask: u32) -> u8 {
         fn dfs(cur: usize, visited: u32, mask: u32, budget: &mut u32) -> u8 {
@@ -962,7 +1020,7 @@ impl NTupleNet {
     }
 
     /// Indices into the active global tables, in table order.
-    fn global_indices(&self, codes: &[u8; CELLS]) -> ([usize; 8], usize) {
+    fn global_indices(&self, codes: &[u8; CELLS]) -> ([usize; 16], usize) {
         let a = self.cfg.alphabet;
         let m = self.m;
         let mags: Vec<u32> = codes.iter().map(|&c| code_mag(c, a)).collect();
@@ -971,7 +1029,7 @@ impl NTupleNet {
         let mut sorted = mags.clone();
         sorted.sort_unstable_by(|x, y| y.cmp(x));
         let mut blobs_c: Option<Vec<Blob>> = None;
-        let mut out = [0usize; 8];
+        let mut out = [0usize; 16];
         let mut n = 0;
         for k in &self.gkinds {
             out[n] = match *k {
@@ -1018,7 +1076,12 @@ impl NTupleNet {
                 | GKind::Blob2
                 | GKind::PathTier
                 | GKind::PathAlpha
-                | GKind::Path2 => {
+                | GKind::Path2
+                | GKind::Blob3
+                | GKind::Path3
+                | GKind::Blob4
+                | GKind::Path4
+                | GKind::BlobPath22 => {
                     let bl = blobs_c.get_or_insert_with(|| self.blobs(codes));
                     match *k {
                         GKind::BlobTier => {
@@ -1071,6 +1134,14 @@ impl NTupleNet {
                             (((l1 as usize).min(5) * m + c1 as usize) * 6 + (l2 as usize).min(5))
                                 * m
                                 + c2 as usize
+                        }
+                        GKind::Blob3 => Self::blob_index_topn(bl, 3, m),
+                        GKind::Blob4 => Self::blob_index_topn(bl, 4, m),
+                        GKind::Path3 => Self::path_index_topn(bl, 3, m),
+                        GKind::Path4 => Self::path_index_topn(bl, 4, m),
+                        GKind::BlobPath22 => {
+                            Self::blob_index_topn(bl, 2, m) * (6 * m * 6 * m)
+                                + Self::path_index_topn(bl, 2, m)
                         }
                         _ => unreachable!(),
                     }
@@ -2130,7 +2201,9 @@ mod tests {
             | EX_EQPAIRS
             | EX_PATHTIER
             | EX_PATHALPHA
-            | EX_PATH2;
+            | EX_PATH2
+            | EX_BLOB3
+            | EX_PATH3;
         let mut net = NTupleNet::new(1.0, cfg);
         let mut b = Board::new_game(5);
         for _ in 0..30 {
@@ -2160,6 +2233,32 @@ mod tests {
         assert_eq!(loaded.cfg.extra, cfg.extra);
         assert!((loaded.value(&codes) - v).abs() < 1e-6);
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn big_cartesian_globals_symmetric() {
+        // (6m)^4 tables are large, so exercise them on the Coarse alphabet
+        let mut cfg = NetConfig::base();
+        cfg.alphabet = Alphabet::Coarse;
+        cfg.with_2x3 = false;
+        cfg.extra = EX_BLOB4 | EX_PATH4 | EX_BP22;
+        let net = NTupleNet::new(1.0, cfg);
+        let b = Board::new_game(9);
+        let codes = net.encode(&b.cells);
+        // dihedral transforms of the board must hit identical global indices
+        let (gi, gn) = net.global_indices(&codes);
+        for t in 0..8 {
+            let mut tc = [0u8; CELLS];
+            for r in 0..N {
+                for c in 0..N {
+                    let (rr, cc) = dihedral(r, c, t);
+                    tc[idx(rr, cc)] = codes[idx(r, c)];
+                }
+            }
+            let (ti, tn) = net.global_indices(&tc);
+            assert_eq!(gn, tn);
+            assert_eq!(gi[..gn], ti[..tn], "transform {t}");
+        }
     }
 
     #[test]

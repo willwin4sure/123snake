@@ -406,6 +406,11 @@ fn cmd_ntuple(args: &[String]) {
                             "pathtier" => EX_PATHTIER,
                             "pathalpha" => EX_PATHALPHA,
                             "path2" => EX_PATH2,
+                            "blob3" => EX_BLOB3,
+                            "path3" => EX_PATH3,
+                            "blob4" => EX_BLOB4,
+                            "path4" => EX_PATH4,
+                            "bp22" => EX_BP22,
                             other => panic!("unknown --extra flag {other}"),
                         })
                         .fold(0, |a, b| a | b)
