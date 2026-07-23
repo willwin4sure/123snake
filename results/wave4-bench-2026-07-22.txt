@@ -29,3 +29,10 @@ A3-projected 8x96 n=500 | eval n=500 seed0=15000  mean 3875.0  p10 671  p50 3261
 A3 V-star greedy n=3000 | eval n=3000 seed0=15000  mean 2577.1  p10 484  p50 2147  p90 5274  p99 8267  max 13198
 A3 plain greedy n=3000 | eval n=3000 seed0=15000  mean 2631.9  p10 507  p50 2116  p90 5368  p99 8787  max 11964
 AC1-triple @30k | eval n=30000 seed0=15000  mean 2693.0  p10 519  p50 2228  p90 5446  p99 8862  max 13837
+A9-blobtier @30k | eval n=30000 seed0=15000  mean 2533.5  p10 516  p50 2075  p90 5157  p99 8281  max 13881
+A14-pathtier @30k | eval n=30000 seed0=15000  mean 2530.8  p10 506  p50 2087  p90 5149  p99 8342  max 12766
+A10-blobalpha @30k | eval n=30000 seed0=15000  mean 2586.3  p10 515  p50 2141  p90 5218  p99 8592  max 13630
+A15-pathalpha @30k | eval n=30000 seed0=15000  mean 2605.7  p10 505  p50 2161  p90 5276  p99 8731  max 14194
+A11-blob2 @30k | eval n=30000 seed0=15000  mean 2670.4  p10 519  p50 2200  p90 5393  p99 8825  max 14223
+A3-pos23-10M @30k | eval n=30000 seed0=15000  mean 2650.3  p10 522  p50 2170  p90 5415  p99 8759  max 14396
+A16-path2 @30k | eval n=30000 seed0=15000  mean 2685.2  p10 530  p50 2231  p90 5392  p99 8856  max 14784
