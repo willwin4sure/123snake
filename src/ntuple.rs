@@ -1692,6 +1692,56 @@ impl NTupleNet {
         Ok(net)
     }
 
+    /// Enforce refill consistency on every tuple table: each entry that
+    /// contains the PENDING code is replaced by the mean of its 3^p full
+    /// refinements (pending -> 1/2/3), so V(afterstate) exactly equals the
+    /// expected V over refills for the tuple part of the network. Globals
+    /// are not multilinear in cell codes and are left untouched.
+    pub fn consistency_project(&mut self) {
+        let m = self.m;
+        let pend = self.cfg.alphabet.pending() as usize;
+        let c123: [usize; 3] = [
+            self.cfg.alphabet.encode(1) as usize,
+            self.cfg.alphabet.encode(2) as usize,
+            self.cfg.alphabet.encode(3) as usize,
+        ];
+        for (t, ar) in self.arity.clone().iter().enumerate() {
+            let k = *ar as usize;
+            if k == 0 {
+                continue;
+            }
+            // digit weights, most significant first (index() builds i = i*m+c)
+            let pw: Vec<usize> = (0..k).rev().map(|p| m.pow(p as u32)).collect();
+            let lut = &mut self.tables[t];
+            for e in 0..lut.w.len() {
+                let mut digs = [0usize; 8];
+                let mut rest = e;
+                for p in (0..k).rev() {
+                    digs[p] = rest % m;
+                    rest /= m;
+                }
+                let pending: Vec<usize> = (0..k).filter(|&p| digs[p] == pend).collect();
+                if pending.is_empty() {
+                    continue;
+                }
+                // average over all refinements; they contain no pending
+                // digits, so this reads only untouched exact entries
+                let n = 3usize.pow(pending.len() as u32);
+                let mut acc = 0.0f64;
+                for a in 0..n {
+                    let mut e2 = e;
+                    let mut aa = a;
+                    for &p in &pending {
+                        e2 = e2 - pend * pw[p] + c123[aa % 3] * pw[p];
+                        aa /= 3;
+                    }
+                    acc += lut.w[e2] as f64;
+                }
+                lut.w[e] = (acc / n as f64) as f32;
+            }
+        }
+    }
+
     /// Greedy move: argmax over legal moves of reward + V(afterstate).
     /// Returns (move, reward, afterstate codes).
     pub fn greedy(&self, b: &Board) -> Option<(Move, f64, [u8; CELLS])> {

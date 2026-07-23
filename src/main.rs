@@ -444,6 +444,14 @@ fn cmd_ntuple(args: &[String]) {
         Some(p) => NTupleNet::load(&p, alpha).expect("load net"),
         None => NTupleNet::new(alpha, cfg),
     };
+    if args.iter().any(|a| a == "--project") {
+        let t0 = std::time::Instant::now();
+        net.consistency_project();
+        eprintln!(
+            "consistency-projected in {:.1}s",
+            t0.elapsed().as_secs_f64()
+        );
+    }
     if start_min {
         use integer_snake::ntuple::{G_ROWS, G_SQ2};
         net.set_active_groups(&[G_ROWS, G_SQ2]);
