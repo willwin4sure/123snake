@@ -261,7 +261,8 @@ pub const G_BLK23: u8 = 5;
 pub const G_BIGL: u8 = 6;
 pub const G_X: u8 = 7;
 pub const G_STAIR6: u8 = 8;
-pub const N_GROUPS: usize = 9;
+pub const G_TINY: u8 = 9;
+pub const N_GROUPS: usize = 10;
 
 /// Extra-feature bitmask (cfg.extra).
 pub const EX_BIGL: u32 = 1;
@@ -282,6 +283,7 @@ pub const EX_PATH3: u32 = 16384;
 pub const EX_BLOB4: u32 = 32768;
 pub const EX_PATH4: u32 = 65536;
 pub const EX_BP22: u32 = 131072;
+pub const EX_TINY: u32 = 262144;
 
 /// Global feature kinds, in table order.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -558,6 +560,64 @@ impl NTupleNet {
                 tables.push(Lut::new(m.pow(6)));
                 arity.push(6);
                 add_base(&mut images, cells, tables.len() - 1, G_STAIR6);
+            }
+        }
+        // tiny redundant tuples: adjacent pairs, 3-in-line, bent triominoes,
+        // 4-in-line — ONE shared translation-invariant table per family
+        // (orbit reps computed exhaustively; coverage 40/30/64/20)
+        if cfg.extra & EX_TINY != 0 {
+            let pair2: [[(usize, usize); 2]; 6] = [
+                [(0, 0), (0, 1)],
+                [(0, 1), (0, 2)],
+                [(0, 1), (1, 1)],
+                [(0, 2), (1, 2)],
+                [(1, 1), (1, 2)],
+                [(1, 2), (2, 2)],
+            ];
+            tables.push(Lut::new(m.pow(2)));
+            arity.push(2);
+            for cells in &pair2 {
+                add_base(&mut images, cells, tables.len() - 1, G_TINY);
+            }
+            let line3: [[(usize, usize); 3]; 6] = [
+                [(0, 0), (0, 1), (0, 2)],
+                [(0, 1), (0, 2), (0, 3)],
+                [(0, 1), (1, 1), (2, 1)],
+                [(0, 2), (1, 2), (2, 2)],
+                [(1, 1), (1, 2), (1, 3)],
+                [(1, 2), (2, 2), (3, 2)],
+            ];
+            tables.push(Lut::new(m.pow(3)));
+            arity.push(3);
+            for cells in &line3 {
+                add_base(&mut images, cells, tables.len() - 1, G_TINY);
+            }
+            let sl3: [[(usize, usize); 3]; 10] = [
+                [(0, 0), (0, 1), (1, 0)],
+                [(0, 0), (0, 1), (1, 1)],
+                [(0, 1), (0, 2), (1, 1)],
+                [(0, 1), (0, 2), (1, 2)],
+                [(0, 1), (1, 0), (1, 1)],
+                [(0, 1), (1, 1), (1, 2)],
+                [(0, 2), (1, 1), (1, 2)],
+                [(1, 1), (1, 2), (2, 1)],
+                [(1, 1), (1, 2), (2, 2)],
+                [(1, 2), (2, 1), (2, 2)],
+            ];
+            tables.push(Lut::new(m.pow(3)));
+            arity.push(3);
+            for cells in &sl3 {
+                add_base(&mut images, cells, tables.len() - 1, G_TINY);
+            }
+            let line4: [[(usize, usize); 4]; 3] = [
+                [(0, 0), (0, 1), (0, 2), (0, 3)],
+                [(0, 1), (1, 1), (2, 1), (3, 1)],
+                [(0, 2), (1, 2), (2, 2), (3, 2)],
+            ];
+            tables.push(Lut::new(m.pow(4)));
+            arity.push(4);
+            for cells in &line4 {
+                add_base(&mut images, cells, tables.len() - 1, G_TINY);
             }
         }
         // 2x3 blocks: the 24 placements (both orientations) decompose into 4
@@ -2117,6 +2177,7 @@ mod tests {
         let mut cfg = NetConfig::base();
         cfg.staircase = true;
         cfg.diagonals = true;
+        cfg.extra = EX_TINY;
         let net = NTupleNet::new(1.0, cfg);
         let stamped: BTreeSet<BTreeSet<usize>> = net
             .images
@@ -2128,6 +2189,10 @@ mod tests {
             ("2x3", vec![(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2)]),
             ("plus", vec![(1, 1), (0, 1), (2, 1), (1, 0), (1, 2)]),
             ("stair", vec![(0, 0), (1, 0), (1, 1), (2, 1), (2, 2)]),
+            ("pair2", vec![(0, 0), (0, 1)]),
+            ("line3", vec![(0, 0), (0, 1), (0, 2)]),
+            ("smallL3", vec![(0, 0), (0, 1), (1, 0)]),
+            ("line4", vec![(0, 0), (0, 1), (0, 2), (0, 3)]),
         ] {
             for p in placements(&shape) {
                 assert!(stamped.contains(&p), "{name} placement missing: {p:?}");
@@ -2203,7 +2268,8 @@ mod tests {
             | EX_PATHALPHA
             | EX_PATH2
             | EX_BLOB3
-            | EX_PATH3;
+            | EX_PATH3
+            | EX_TINY;
         let mut net = NTupleNet::new(1.0, cfg);
         let mut b = Board::new_game(5);
         for _ in 0..30 {
