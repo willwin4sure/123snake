@@ -1874,34 +1874,66 @@ impl NTupleNet {
 /// calibrates V on off-policy moves (the probe's rank bias). Returns the
 /// chosen (move, reward, afterstate, explored?).
 #[allow(clippy::type_complexity)]
+/// Avg pairwise Manhattan distance among cells with magnitude >= 48
+/// (0 when fewer than two). Drives the commitment exploration bonus.
+fn big_tile_avg_dist(codes: &[u8; CELLS], a: Alphabet) -> f64 {
+    let big: Vec<usize> = (0..CELLS)
+        .filter(|&i| code_mag(codes[i], a) >= 48)
+        .collect();
+    if big.len() < 2 {
+        return 0.0;
+    }
+    let mut sum = 0usize;
+    let mut np = 0usize;
+    for i in 0..big.len() {
+        for j in i + 1..big.len() {
+            let (r1, c1) = rc(big[i]);
+            let (r2, c2) = rc(big[j]);
+            sum += r1.abs_diff(r2) + c1.abs_diff(c2);
+            np += 1;
+        }
+    }
+    sum as f64 / np as f64
+}
+
 fn choose_train(
     net: &NTupleNet,
     b: &Board,
     rng: &mut Mulberry32,
     eps_rank: f32,
     eps_rand: f32,
+    commit: f64,
 ) -> Option<(Move, f64, [u8; CELLS], bool)> {
     let roll = rng.next_f64() as f32;
-    if roll >= eps_rank + eps_rand {
+    if roll >= eps_rank + eps_rand && commit == 0.0 {
         if net.bonus > 0.0 {
             return net.greedy_bonus(b).map(|(mv, r, a)| (mv, r, a, false));
         }
         return net.greedy(b).map(|(mv, r, a)| (mv, r, a, false));
     }
+    // commitment bonus (selection-only, annealed by the caller): steer
+    // whole games toward concentrated big tiles so TD can learn the true
+    // value of committed play; updates remain unshaped
     let codes = net.encode(&b.cells);
     let mut scored: Vec<(Move, u64, f64)> = b
         .legal_moves_capped(MOVE_CAP)
         .into_iter()
         .map(|mv| {
             let sum = b.cells[mv.path[0] as usize] * mv.path.len() as u64;
-            let val = sum as f64 + net.value(&net.afterstate(&codes, &mv, sum));
+            let after = net.afterstate(&codes, &mv, sum);
+            let val = sum as f64 + net.value(&after)
+                - commit * big_tile_avg_dist(&after, net.cfg.alphabet);
             (mv, sum, val)
         })
         .collect();
     if scored.is_empty() {
         return None;
     }
-    let pick = if roll < eps_rand {
+    let pick = if roll >= eps_rank + eps_rand {
+        // commit-steered greedy: argmax of bonus-adjusted value
+        scored.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+        0
+    } else if roll < eps_rand {
         rng.below(scored.len())
     } else {
         scored.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
@@ -1919,7 +1951,7 @@ fn choose_train(
 
 /// One self-play game with TD(0) updates. Returns (score, moves).
 pub fn train_game(net: &mut NTupleNet, seed: u32) -> (u64, u32) {
-    let (s, m, _) = train_game_eps(net, seed, 0.0, 0.0);
+    let (s, m, _) = train_game_eps(net, seed, 0.0, 0.0, 0.0);
     (s, m)
 }
 
@@ -1929,12 +1961,13 @@ pub fn train_game_eps(
     seed: u32,
     eps_rank: f32,
     eps_rand: f32,
+    commit: f64,
 ) -> (u64, u32, u64) {
     let mut b = Board::new_game(seed);
     let mut xrng = Mulberry32::new(seed ^ 0x9E37_79B9);
     let mut prev: Option<[u8; CELLS]> = None;
     loop {
-        match choose_train(net, &b, &mut xrng, eps_rank, eps_rand) {
+        match choose_train(net, &b, &mut xrng, eps_rank, eps_rand, commit) {
             None => {
                 if let Some(pa) = prev {
                     net.update(&pa, 0.0);
@@ -1961,7 +1994,7 @@ pub fn train_game_lambda(
     lambda: f32,
     trace_len: usize,
 ) -> (u64, u32) {
-    let (s, m, _) = train_game_lambda_eps(net, seed, lambda, trace_len, 0.0, 0.0);
+    let (s, m, _) = train_game_lambda_eps(net, seed, lambda, trace_len, 0.0, 0.0, 0.0);
     (s, m)
 }
 
@@ -1975,6 +2008,7 @@ pub fn train_game_lambda_eps(
     trace_len: usize,
     eps_rank: f32,
     eps_rand: f32,
+    commit: f64,
 ) -> (u64, u32, u64) {
     fn apply_traces(
         net: &mut NTupleNet,
@@ -1995,7 +2029,7 @@ pub fn train_game_lambda_eps(
     let mut xrng = Mulberry32::new(seed ^ 0x9E37_79B9);
     let mut traces: std::collections::VecDeque<[u8; CELLS]> = Default::default();
     loop {
-        match choose_train(net, &b, &mut xrng, eps_rank, eps_rand) {
+        match choose_train(net, &b, &mut xrng, eps_rank, eps_rand, commit) {
             None => {
                 if let Some(last) = traces.front() {
                     let delta = -(net.value(last) as f32);

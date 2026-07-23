@@ -339,6 +339,15 @@ fn cmd_ntuple(args: &[String]) {
     let seed0: u32 = arg_val(args, "--seed0")
         .and_then(|v| v.parse().ok())
         .unwrap_or(100_000_000);
+    // --explore-commit c:anneal_games — selection-only bonus of
+    // -c * avg-dist(big tiles) during training move choice, annealed
+    // linearly to zero over the first anneal_games games
+    let (commit_c, commit_anneal): (f64, u32) = arg_val(args, "--explore-commit")
+        .and_then(|v| {
+            let (c, a) = v.split_once(':')?;
+            Some((c.parse().ok()?, a.parse().ok()?))
+        })
+        .unwrap_or((0.0, 1));
     let eval_every: u32 = arg_val(args, "--eval-every")
         .and_then(|v| v.parse().ok())
         .unwrap_or(5000);
@@ -858,6 +867,7 @@ fn cmd_ntuple(args: &[String]) {
     // 5000 games reached its max-tile threshold
     let mut reach: std::collections::VecDeque<(bool, bool)> = Default::default();
     for g in 0..games {
+        let commit_now = commit_c * (1.0 - (g as f64 / commit_anneal.max(1) as f64)).max(0.0);
         let (score, _, maxt) = if lambda > 0.0 {
             integer_snake::ntuple::train_game_lambda_eps(
                 &mut net,
@@ -866,6 +876,7 @@ fn cmd_ntuple(args: &[String]) {
                 trace_len,
                 eps_rank,
                 eps_rand,
+                commit_now,
             )
         } else {
             integer_snake::ntuple::train_game_eps(
@@ -873,6 +884,7 @@ fn cmd_ntuple(args: &[String]) {
                 seed0.wrapping_add(g),
                 eps_rank,
                 eps_rand,
+                commit_now,
             )
         };
         if net.cfg.stages > 1 {
