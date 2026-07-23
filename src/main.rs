@@ -412,6 +412,7 @@ fn cmd_ntuple(args: &[String]) {
                             "path4" => EX_PATH4,
                             "bp22" => EX_BP22,
                             "tiny" => EX_TINY,
+                            "run42" => EX_RUN42,
                             other => panic!("unknown --extra flag {other}"),
                         })
                         .fold(0, |a, b| a | b)

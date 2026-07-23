@@ -262,7 +262,8 @@ pub const G_BIGL: u8 = 6;
 pub const G_X: u8 = 7;
 pub const G_STAIR6: u8 = 8;
 pub const G_TINY: u8 = 9;
-pub const N_GROUPS: usize = 10;
+pub const G_RUN42: u8 = 10;
+pub const N_GROUPS: usize = 11;
 
 /// Extra-feature bitmask (cfg.extra).
 pub const EX_BIGL: u32 = 1;
@@ -284,6 +285,7 @@ pub const EX_BLOB4: u32 = 32768;
 pub const EX_PATH4: u32 = 65536;
 pub const EX_BP22: u32 = 131072;
 pub const EX_TINY: u32 = 262144;
+pub const EX_RUN42: u32 = 524288;
 
 /// Global feature kinds, in table order.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -618,6 +620,38 @@ impl NTupleNet {
             arity.push(4);
             for cells in &line4 {
                 add_base(&mut images, cells, tables.len() - 1, G_TINY);
+            }
+        }
+        // 4+2 runs: a 4-in-line with an adjacent 2-in-line (2x2 square with
+        // a 1x2 hanging off). Two free forms — 2-run flush with the end
+        // (64 placements, 8 orbits) or centered (32 placements, 4 orbits) —
+        // each sharing ONE translation-invariant table to stay in memory.
+        if cfg.extra & EX_RUN42 != 0 {
+            let flush: [[(usize, usize); 6]; 8] = [
+                [(0, 0), (0, 1), (0, 2), (0, 3), (1, 0), (1, 1)],
+                [(0, 0), (0, 1), (0, 2), (0, 3), (1, 2), (1, 3)],
+                [(0, 0), (0, 1), (1, 0), (1, 1), (1, 2), (1, 3)],
+                [(0, 1), (0, 2), (1, 1), (1, 2), (1, 3), (1, 4)],
+                [(0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (3, 1)],
+                [(0, 1), (0, 2), (1, 1), (1, 2), (2, 2), (3, 2)],
+                [(0, 1), (1, 1), (2, 1), (2, 2), (3, 1), (3, 2)],
+                [(0, 2), (1, 2), (2, 1), (2, 2), (3, 1), (3, 2)],
+            ];
+            tables.push(Lut::new(m.pow(6)));
+            arity.push(6);
+            for cells in &flush {
+                add_base(&mut images, cells, tables.len() - 1, G_RUN42);
+            }
+            let centered: [[(usize, usize); 6]; 4] = [
+                [(0, 0), (0, 1), (0, 2), (0, 3), (1, 1), (1, 2)],
+                [(0, 1), (0, 2), (1, 0), (1, 1), (1, 2), (1, 3)],
+                [(0, 1), (1, 1), (1, 2), (2, 1), (2, 2), (3, 1)],
+                [(0, 2), (1, 1), (1, 2), (2, 1), (2, 2), (3, 2)],
+            ];
+            tables.push(Lut::new(m.pow(6)));
+            arity.push(6);
+            for cells in &centered {
+                add_base(&mut images, cells, tables.len() - 1, G_RUN42);
             }
         }
         // 2x3 blocks: the 24 placements (both orientations) decompose into 4
@@ -2196,6 +2230,32 @@ mod tests {
         ] {
             for p in placements(&shape) {
                 assert!(stamped.contains(&p), "{name} placement missing: {p:?}");
+            }
+        }
+        // run42 on a small alphabet (its 6-cell tables are big on Base)
+        let mut cfg2 = NetConfig::base();
+        cfg2.alphabet = Alphabet::Coarse;
+        cfg2.with_2x3 = false;
+        cfg2.extra = EX_RUN42;
+        let net2 = NTupleNet::new(1.0, cfg2);
+        let stamped2: BTreeSet<BTreeSet<usize>> = net2
+            .images
+            .iter()
+            .filter(|img| img.group == G_RUN42)
+            .map(|img| img.cells.iter().map(|&c| c as usize).collect())
+            .collect();
+        for (name, shape) in [
+            (
+                "run42-flush",
+                vec![(0, 0), (0, 1), (0, 2), (0, 3), (1, 0), (1, 1)],
+            ),
+            (
+                "run42-centered",
+                vec![(0, 0), (0, 1), (0, 2), (0, 3), (1, 1), (1, 2)],
+            ),
+        ] {
+            for p in placements(&shape) {
+                assert!(stamped2.contains(&p), "{name} placement missing: {p:?}");
             }
         }
     }
