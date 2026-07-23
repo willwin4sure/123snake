@@ -22,3 +22,10 @@ A5-xshape @30k | eval n=30000 seed0=15000  mean 2531.6  p10 497  p50 2079  p90 5
 KE10-a20 @30k | eval n=30000 seed0=15000  mean 2582.7  p10 511  p50 2110  p90 5285  p99 8650  max 14757
 L10-optimist @30k | eval n=30000 seed0=15000  mean 2540.5  p10 523  p50 2119  p90 5092  p99 8183  max 14170
 BENCH30KDONE
+A13-eqpairs @30k | eval n=30000 seed0=15000  mean 2638.7  p10 545  p50 2224  p90 5248  p99 8639  max 13255
+A12-freefield @30k | eval n=30000 seed0=15000  mean 2543.6  p10 520  p50 2104  p90 5140  p99 8413  max 13653
+A3-projected @30k greedy | eval n=30000 seed0=15000  mean 2513.3  p10 489  p50 2038  p90 5210  p99 8273  max 13080
+A3-projected 8x96 n=500 | eval n=500 seed0=15000  mean 3875.0  p10 671  p50 3261  p90 7988  p99 12276  max 18643
+A3 V-star greedy n=3000 | eval n=3000 seed0=15000  mean 2577.1  p10 484  p50 2147  p90 5274  p99 8267  max 13198
+A3 plain greedy n=3000 | eval n=3000 seed0=15000  mean 2631.9  p10 507  p50 2116  p90 5368  p99 8787  max 11964
+AC1-triple @30k | eval n=30000 seed0=15000  mean 2693.0  p10 519  p50 2228  p90 5446  p99 8862  max 13837
