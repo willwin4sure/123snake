@@ -1742,6 +1742,98 @@ impl NTupleNet {
         }
     }
 
+    /// Symmetric refill-consistency smoothing: for every entry with a
+    /// pending digit and each pending position, project the constraint
+    /// w[parent] == mean(w[children over 1/2/3]) by the least-squares step
+    /// parent -= b*(3/4)*delta, child += b*(1/4)*delta. Children may still
+    /// contain other pending digits, so every level of the refinement
+    /// lattice participates; repeated sweeps (Kaczmarz) converge to the
+    /// joint projection. b=1, several sweeps ~= hard consistency without
+    /// discarding what pending entries learned.
+    pub fn consistency_smooth(&mut self, beta: f32, sweeps: usize) {
+        let m = self.m;
+        let pend = self.cfg.alphabet.pending() as usize;
+        let c123: [usize; 3] = [
+            self.cfg.alphabet.encode(1) as usize,
+            self.cfg.alphabet.encode(2) as usize,
+            self.cfg.alphabet.encode(3) as usize,
+        ];
+        for _ in 0..sweeps {
+            for (t, ar) in self.arity.clone().iter().enumerate() {
+                let k = *ar as usize;
+                if k == 0 {
+                    continue;
+                }
+                let pw: Vec<usize> = (0..k).rev().map(|p| m.pow(p as u32)).collect();
+                let lut = &mut self.tables[t];
+                for e in 0..lut.w.len() {
+                    let mut digs = [0usize; 8];
+                    let mut rest = e;
+                    for p in (0..k).rev() {
+                        digs[p] = rest % m;
+                        rest /= m;
+                    }
+                    for p in 0..k {
+                        if digs[p] != pend {
+                            continue;
+                        }
+                        let ch: [usize; 3] = [
+                            e - pend * pw[p] + c123[0] * pw[p],
+                            e - pend * pw[p] + c123[1] * pw[p],
+                            e - pend * pw[p] + c123[2] * pw[p],
+                        ];
+                        let mean = (lut.w[ch[0]] + lut.w[ch[1]] + lut.w[ch[2]]) / 3.0;
+                        let delta = lut.w[e] - mean;
+                        lut.w[e] -= beta * 0.75 * delta;
+                        let bump = beta * 0.25 * delta;
+                        for &c in &ch {
+                            lut.w[c] += bump;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Leave-one-out single-pending smoothing: value a multi-pending
+    /// afterstate as the mean over (last-revealed cell l in S, refill
+    /// values z for S\l) of V(with S\l refined per z, l pending). Equals
+    /// V for |S| <= 1; routes all pending reads through the well-trained
+    /// single-pending regime. Falls back to plain V for |S| > 4 (cost).
+    pub fn value_star(&self, codes: &[u8; CELLS]) -> f64 {
+        let pend = self.cfg.alphabet.pending();
+        let s: Vec<usize> = (0..CELLS).filter(|&i| codes[i] == pend).collect();
+        let p = s.len();
+        if p <= 1 || p > 4 {
+            return self.value(codes);
+        }
+        let c123 = [
+            self.cfg.alphabet.encode(1),
+            self.cfg.alphabet.encode(2),
+            self.cfg.alphabet.encode(3),
+        ];
+        let n_z = 3usize.pow((p - 1) as u32);
+        let mut acc = 0.0f64;
+        let mut work = *codes;
+        for &l in &s {
+            for z in 0..n_z {
+                let mut zz = z;
+                for &c in &s {
+                    if c != l {
+                        work[c] = c123[zz % 3];
+                        zz /= 3;
+                    }
+                }
+                work[l] = pend;
+                acc += self.value(&work);
+            }
+        }
+        for &c in &s {
+            work[c] = pend;
+        }
+        acc / (p * n_z) as f64
+    }
+
     /// Greedy move: argmax over legal moves of reward + V(afterstate).
     /// Returns (move, reward, afterstate codes).
     pub fn greedy(&self, b: &Board) -> Option<(Move, f64, [u8; CELLS])> {

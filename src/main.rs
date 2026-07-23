@@ -444,6 +444,14 @@ fn cmd_ntuple(args: &[String]) {
         Some(p) => NTupleNet::load(&p, alpha).expect("load net"),
         None => NTupleNet::new(alpha, cfg),
     };
+    if let Some(sw) = arg_val(args, "--smooth").and_then(|v| v.parse::<usize>().ok()) {
+        let t0 = std::time::Instant::now();
+        net.consistency_smooth(1.0, sw);
+        eprintln!(
+            "consistency-smoothed ({sw} sweeps) in {:.1}s",
+            t0.elapsed().as_secs_f64()
+        );
+    }
     if args.iter().any(|a| a == "--project") {
         let t0 = std::time::Instant::now();
         net.consistency_project();
@@ -722,6 +730,33 @@ fn cmd_ntuple(args: &[String]) {
                             b.score
                         );
                     }
+                }
+                out
+            }
+            None if args.iter().any(|a| a == "--star") => {
+                // greedy over the leave-one-out smoothed value V*
+                let mut out: Vec<u64> = Vec::with_capacity(eval_games as usize);
+                for g in 0..eval_games {
+                    let mut b = Board::new_game(eval_seed0 + g);
+                    loop {
+                        let codes = net.encode(&b.cells);
+                        let best = b
+                            .legal_moves_capped(integer_snake::game::MOVE_CAP)
+                            .into_iter()
+                            .map(|mv| {
+                                let sum = b.cells[mv.path[0] as usize] * mv.path.len() as u64;
+                                let after = net.afterstate(&codes, &mv, sum);
+                                (mv, sum as f64 + net.value_star(&after))
+                            })
+                            .max_by(|x, y| {
+                                x.1.partial_cmp(&y.1).unwrap_or(std::cmp::Ordering::Equal)
+                            });
+                        match best {
+                            Some((mv, _)) => b.apply(&mv),
+                            None => break,
+                        }
+                    }
+                    out.push(b.score);
                 }
                 out
             }
