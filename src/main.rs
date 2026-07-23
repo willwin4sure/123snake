@@ -537,6 +537,55 @@ fn cmd_ntuple(args: &[String]) {
         println!("lowest-valued pair geometries:");
         let lo = &seen[seen.len().saturating_sub(10)..];
         show(lo);
+        // dump the other global tables with per-kind index decoding
+        use integer_snake::ntuple::GKind;
+        let m = net.cfg.alphabet.size();
+        for (kind, rows) in net.global_dump() {
+            match kind {
+                GKind::Pair => {}
+                GKind::DispAvg => {
+                    println!("\nDispAvg (rows: avg dist of >=48 tiles; cols: tier 0-7):");
+                    for d in 0..10 {
+                        let cells: Vec<String> = (0..8)
+                            .map(|t| format!("{:>+7.1}", rows[d * 8 + t].0))
+                            .collect();
+                        println!("  d{:>2}: {}", d, cells.join(" "));
+                    }
+                }
+                GKind::EqPairs => {
+                    println!("\nEqPairs (index = # adjacent equal pairs):");
+                    for (i, (w, a)) in rows.iter().enumerate() {
+                        if *a > 0.0 {
+                            println!("  {:>2} pairs: w {:>+8.1}", i, w);
+                        }
+                    }
+                }
+                GKind::Blob2 | GKind::Path2 => {
+                    let mut seen: Vec<(usize, f32)> = rows
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, (_, a))| *a > 1e6)
+                        .map(|(i, (w, _))| (i, *w))
+                        .collect();
+                    seen.sort_by(|x, y| y.1.partial_cmp(&x.1).unwrap());
+                    let dec = |i: usize| {
+                        let c2 = i % m;
+                        let s2 = (i / m) % 6;
+                        let c1 = (i / m / 6) % m;
+                        let s1 = i / m / 6 / m;
+                        format!("s1={s1} c1={c1} s2={s2} c2={c2}")
+                    };
+                    println!("\n{kind:?} top-8 / bottom-8 (well-visited entries):");
+                    for (i, w) in seen.iter().take(8) {
+                        println!("  {}: w {:>+8.1}", dec(*i), w);
+                    }
+                    for (i, w) in seen.iter().rev().take(8).rev() {
+                        println!("  {}: w {:>+8.1}", dec(*i), w);
+                    }
+                }
+                _ => {}
+            }
+        }
         return;
     }
     if let Some(spec) = arg_val(args, "--probe") {

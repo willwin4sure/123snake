@@ -1389,6 +1389,22 @@ impl NTupleNet {
     }
 
     /// (weight, |error| mass) rows of the ungated top-2 position table.
+    /// All global feature tables of stage 0, as (kind, entries of (w, a)).
+    pub fn global_dump(&self) -> Vec<(GKind, Vec<(f32, f32)>)> {
+        let base = self.ntab_stage - self.n_globals;
+        self.gkinds
+            .iter()
+            .enumerate()
+            .map(|(k, &kind)| {
+                let t = &self.tables[base + k];
+                (
+                    kind,
+                    t.w.iter().zip(t.a.iter()).map(|(&w, &a)| (w, a)).collect(),
+                )
+            })
+            .collect()
+    }
+
     pub fn global_pair_table(&self) -> Vec<(f32, f32)> {
         assert!(self.cfg.global, "net has no --global tables");
         let t = &self.tables[self.ntab_stage - self.n_globals];
