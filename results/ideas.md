@@ -59,15 +59,19 @@ results/; this file tracks the research frontier.)
 - AC-10M ladder: AC1 (pos23+bigL+stair6), AC2 (+eqpairs), AC3
   (+eqpairs+blob2+path2), AC4 (blob3+path3+tiny, no eqpairs). Marginal
   reads: AC2-AC1 = eqpairs; AC3-AC2 = blob2+path2; AC4 vs AC3.
-- AS1-commit25: selection-only concentration bonus (-25 x avg-dist of
-  >=48 tiles), annealed to 0 over 2.5M/5M. Tests whether four-corner
-  play is a policy-iteration local optimum. Success = beats AC1-5M 2693
-  after anneal; reversion to spread = spread is genuinely optimal.
 - A20-blob4 / A21-path4 / A22-bp22 (136M-entry cartesian globals),
   A23-tinytuples (pair2/line3/smallL3/line4, 352 images),
   A24-run42 (4-in-line + adjacent 2-run, 2 shared m^6 tables).
 
 ## Negative results (tested)
+
+- **Commitment exploration (AS1, 2026-07-23)**: -25 x avg-dist selection
+  bonus annealed over 2.5M/5M on the AC1 recipe -> 2707 @30k vs AC1
+  2693: PARITY. Exploration tax fully recovered, +900k extra nonzero
+  entries explored, but committed play showed no exploitable value at
+  greedy horizon. Four-corners stands (for now); suspicion shifts to
+  horizon (search-in-training). Steering is free at this dose — c=50+
+  or ladder-adjacency steering remain cheap follow-ups.
 
 - **Refill-consistency surgery** (2026-07-23): hard projection (pending
   entry := mean of refinements) -128 @5.6sigma greedy, neutral under
