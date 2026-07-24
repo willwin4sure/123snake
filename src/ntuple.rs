@@ -286,6 +286,7 @@ pub const EX_PATH4: u32 = 65536;
 pub const EX_BP22: u32 = 131072;
 pub const EX_TINY: u32 = 262144;
 pub const EX_RUN42: u32 = 524288;
+pub const EX_RUN42POS: u32 = 1048576;
 
 /// Global feature kinds, in table order.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -626,7 +627,11 @@ impl NTupleNet {
         // a 1x2 hanging off). Two free forms — 2-run flush with the end
         // (64 placements, 8 orbits) or centered (32 placements, 4 orbits) —
         // each sharing ONE translation-invariant table to stay in memory.
-        if cfg.extra & EX_RUN42 != 0 {
+        if cfg.extra & (EX_RUN42 | EX_RUN42POS) != 0 {
+            // positional variant: one table per orbit rep (12 tables,
+            // ~4.9GB with optimizer state at slim) instead of one shared
+            // table per free form — the pos23 treatment applied to run42
+            let pos = cfg.extra & EX_RUN42POS != 0;
             let flush: [[(usize, usize); 6]; 8] = [
                 [(0, 0), (0, 1), (0, 2), (0, 3), (1, 0), (1, 1)],
                 [(0, 0), (0, 1), (0, 2), (0, 3), (1, 2), (1, 3)],
@@ -637,9 +642,15 @@ impl NTupleNet {
                 [(0, 1), (1, 1), (2, 1), (2, 2), (3, 1), (3, 2)],
                 [(0, 2), (1, 2), (2, 1), (2, 2), (3, 1), (3, 2)],
             ];
-            tables.push(Lut::new(m.pow(6)));
-            arity.push(6);
+            if !pos {
+                tables.push(Lut::new(m.pow(6)));
+                arity.push(6);
+            }
             for cells in &flush {
+                if pos {
+                    tables.push(Lut::new(m.pow(6)));
+                    arity.push(6);
+                }
                 add_base(&mut images, cells, tables.len() - 1, G_RUN42);
             }
             let centered: [[(usize, usize); 6]; 4] = [
@@ -648,9 +659,15 @@ impl NTupleNet {
                 [(0, 1), (1, 1), (1, 2), (2, 1), (2, 2), (3, 1)],
                 [(0, 2), (1, 1), (1, 2), (2, 1), (2, 2), (3, 2)],
             ];
-            tables.push(Lut::new(m.pow(6)));
-            arity.push(6);
+            if !pos {
+                tables.push(Lut::new(m.pow(6)));
+                arity.push(6);
+            }
             for cells in &centered {
+                if pos {
+                    tables.push(Lut::new(m.pow(6)));
+                    arity.push(6);
+                }
                 add_base(&mut images, cells, tables.len() - 1, G_RUN42);
             }
         }
