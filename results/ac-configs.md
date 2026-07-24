@@ -20,6 +20,8 @@ Common flags: `--games 10000000 --alphabet slim --staircase --global
 | AC6-10M | bigL,stair6,eqpairs,blob3,path3,tiny,run42 | 811525 | union of AC4 and AC5 (everything: 520 images, 343M params) |
 | AC7-10M | bigL,stair6,eqpairs,blob3,path3,tiny,run42pos,t321,fish | 7627269 | AC6 with POSITIONAL run42 (12 orbit tables) + t321 triangles + fish (6 positional tables each): 616 images, 1.09B params, ~13GB ceiling |
 
+| AC8-10M | bigL,stair6,eqpairs,run42pos | 1049093 | AC2 + POSITIONAL run42 (the 3017 single-feature champion folded into the lean stack; 680M params) |
+
 Marginal reads: AC2-AC1 = eqpairs; AC3-AC2 = blob2+path2; AC4 vs AC3 =
 {blob3+path3+tiny} vs {eqpairs+blob2+path2}.
 
