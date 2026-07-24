@@ -16,6 +16,9 @@ results/; this file tracks the research frontier.)
   genuinely tiny. Literature: n-tuples (Szubert/Jaskowski/Matsuzaki) and
   CNN agents (incl. stochastic MuZero on 2048) exist separately; a
   joint tables+conv-residual TD net appears rare/unexplored.
+- **run42 shape family** (after run42's +263): variants of the
+  line-plus-support motif — 3+2, 5+2 (if it fits), 4+3, double-flanked
+  4-run, offset variants; positional (per-orbit) run42 tables.
 - **TDLeaf-style fine-tune**: search-in-training; update at PV leaves /
   realized-path leaves toward search-backed targets. Cheap version:
   fine-tune a champion a few 100k games with 4x27-class search.
