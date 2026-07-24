@@ -16,11 +16,13 @@ Common flags: `--games 10000000 --alphabet slim --staircase --global
 | AC3-10M | bigL,stair6,eqpairs,blob2,path2 | 4741 | AC2 + top-2 blobs (size x value)^2 + top-2 disjoint paths (len x value)^2 |
 | AC4-10M | bigL,stair6,blob3,path3,tiny | 286725 | AC1 + top-3 blobs + top-3 paths (stacked, (6m)^3 each) + tiny tuples (pair2/line3/smallL3/line4 shared tables), NO eqpairs |
 
+| AC5-10M | bigL,stair6,eqpairs,path3,run42 | 541189 | AC2 + top-3 disjoint paths + 4-run-with-adjacent-2-run (2 shared m^6 tables) |
+
 Marginal reads: AC2-AC1 = eqpairs; AC3-AC2 = blob2+path2; AC4 vs AC3 =
 {blob3+path3+tiny} vs {eqpairs+blob2+path2}.
 
 Reference points (5M, 30k-game benchmarks, seeds 15000+): slim baseline
 A1 2540; single features path2 2685, blob3 2702, blob2 2670, pos23 2641,
-eqpairs 2639, bigL 2607, stair6 2578; AC1-triple @5M = 2693.
+eqpairs 2639, bigL 2607, stair6 2578; AC1-triple @5M = 2693; run42 2804 (+263, best single feature), path3 2723 (+183), blob4 2709 (+169, = blob3), tiny 2575 (+35).
 Superseded 5M runs: AC1-triple (kept, benchmarked), AC2/AC3/AC4 5M
 killed mid-run 2026-07-23 when the line moved to 10M.
