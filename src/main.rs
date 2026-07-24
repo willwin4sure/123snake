@@ -821,6 +821,33 @@ fn cmd_ntuple(args: &[String]) {
                 }
                 out
             }
+            None if arg_val(args, "--threads").is_some() => {
+                // embarrassingly parallel greedy eval: split seeds across threads
+                let nt: u32 = arg_val(args, "--threads")
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(8);
+                let net_ref = &net;
+                let chunk = eval_games.div_ceil(nt);
+                let mut sc: Vec<u64> = std::thread::scope(|sp| {
+                    let mut handles = Vec::new();
+                    for t in 0..nt {
+                        let s0 = eval_seed0 + t * chunk;
+                        let n = chunk.min(eval_games.saturating_sub(t * chunk));
+                        handles.push(sp.spawn(move || {
+                            integer_snake::ntuple::eval_scores_tiles(net_ref, s0, n)
+                                .into_iter()
+                                .map(|p| p.0)
+                                .collect::<Vec<u64>>()
+                        }));
+                    }
+                    handles
+                        .into_iter()
+                        .flat_map(|h| h.join().unwrap())
+                        .collect()
+                });
+                sc.sort_unstable();
+                sc
+            }
             None => {
                 let pairs = integer_snake::ntuple::eval_scores_tiles(&net, eval_seed0, eval_games);
                 if args.iter().any(|a| a == "--tiles") {
