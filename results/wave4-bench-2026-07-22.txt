@@ -44,3 +44,4 @@ A23-tinytuples @30k | eval n=30000 seed0=15000  mean 2575.4  p10 508  p50 2112  
 A24-run42 @30k | eval n=30000 seed0=15000  mean 2803.5  p10 530  p50 2300  p90 5677  p99 9390  max 16321
 AS1-commit25 @30k | eval n=30000 seed0=15000  mean 2707.3  p10 533  p50 2231  p90 5465  p99 8990  max 14700
 AC1-10M @30k | eval n=30000 seed0=15000  mean 2768.6  p10 522  p50 2255  p90 5650  p99 9571  max 13741
+AC2-10M @30k | eval n=30000 seed0=15000  mean 2895.6  p10 563  p50 2413  p90 5875  p99 9734  max 16104
