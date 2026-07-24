@@ -423,6 +423,8 @@ fn cmd_ntuple(args: &[String]) {
                             "tiny" => EX_TINY,
                             "run42" => EX_RUN42,
                             "run42pos" => EX_RUN42POS,
+                            "t321" => EX_T321,
+                            "fish" => EX_FISH,
                             other => panic!("unknown --extra flag {other}"),
                         })
                         .fold(0, |a, b| a | b)

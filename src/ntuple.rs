@@ -263,7 +263,9 @@ pub const G_X: u8 = 7;
 pub const G_STAIR6: u8 = 8;
 pub const G_TINY: u8 = 9;
 pub const G_RUN42: u8 = 10;
-pub const N_GROUPS: usize = 11;
+pub const G_T321: u8 = 11;
+pub const G_FISH: u8 = 12;
+pub const N_GROUPS: usize = 13;
 
 /// Extra-feature bitmask (cfg.extra).
 pub const EX_BIGL: u32 = 1;
@@ -287,6 +289,8 @@ pub const EX_BP22: u32 = 131072;
 pub const EX_TINY: u32 = 262144;
 pub const EX_RUN42: u32 = 524288;
 pub const EX_RUN42POS: u32 = 1048576;
+pub const EX_T321: u32 = 2097152;
+pub const EX_FISH: u32 = 4194304;
 
 /// Global feature kinds, in table order.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -669,6 +673,42 @@ impl NTupleNet {
                     arity.push(6);
                 }
                 add_base(&mut images, cells, tables.len() - 1, G_RUN42);
+            }
+        }
+        // 321 triangles: staircase-with-filled-corner 6-tuples. Contains
+        // every 5-cell staircase AND every bigL placement (fold targets).
+        // 36 placements, 6 positional orbit tables.
+        if cfg.extra & EX_T321 != 0 {
+            let reps: [[(usize, usize); 6]; 6] = [
+                [(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (2, 0)],
+                [(0, 0), (0, 1), (0, 2), (1, 1), (1, 2), (2, 2)],
+                [(0, 1), (0, 2), (0, 3), (1, 1), (1, 2), (2, 1)],
+                [(0, 1), (1, 1), (1, 2), (2, 1), (2, 2), (2, 3)],
+                [(0, 2), (1, 1), (1, 2), (2, 0), (2, 1), (2, 2)],
+                [(1, 1), (1, 2), (1, 3), (2, 1), (2, 2), (3, 1)],
+            ];
+            for cells in &reps {
+                tables.push(Lut::new(m.pow(6)));
+                arity.push(6);
+                add_base(&mut images, cells, tables.len() - 1, G_T321);
+            }
+        }
+        // fish: 2x2 square with two cells hanging around one corner
+        // (= plus with a filled diagonal corner; contains every plus AND
+        // every 2x2 placement). 36 placements, 6 positional orbit tables.
+        if cfg.extra & EX_FISH != 0 {
+            let reps: [[(usize, usize); 6]; 6] = [
+                [(0, 0), (0, 1), (1, 0), (1, 1), (1, 2), (2, 1)],
+                [(0, 1), (0, 2), (1, 0), (1, 1), (1, 2), (2, 1)],
+                [(0, 1), (0, 2), (1, 1), (1, 2), (1, 3), (2, 2)],
+                [(0, 1), (1, 0), (1, 1), (1, 2), (2, 1), (2, 2)],
+                [(0, 2), (1, 1), (1, 2), (1, 3), (2, 1), (2, 2)],
+                [(1, 1), (1, 2), (2, 1), (2, 2), (2, 3), (3, 2)],
+            ];
+            for cells in &reps {
+                tables.push(Lut::new(m.pow(6)));
+                arity.push(6);
+                add_base(&mut images, cells, tables.len() - 1, G_FISH);
             }
         }
         // 2x3 blocks: the 24 placements (both orientations) decompose into 4
@@ -2445,12 +2485,12 @@ mod tests {
         let mut cfg2 = NetConfig::base();
         cfg2.alphabet = Alphabet::Coarse;
         cfg2.with_2x3 = false;
-        cfg2.extra = EX_RUN42;
+        cfg2.extra = EX_RUN42 | EX_T321 | EX_FISH;
         let net2 = NTupleNet::new(1.0, cfg2);
         let stamped2: BTreeSet<BTreeSet<usize>> = net2
             .images
             .iter()
-            .filter(|img| img.group == G_RUN42)
+            .filter(|img| img.group == G_RUN42 || img.group == G_T321 || img.group == G_FISH)
             .map(|img| img.cells.iter().map(|&c| c as usize).collect())
             .collect();
         for (name, shape) in [
@@ -2462,6 +2502,8 @@ mod tests {
                 "run42-centered",
                 vec![(0, 0), (0, 1), (0, 2), (0, 3), (1, 1), (1, 2)],
             ),
+            ("t321", vec![(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (2, 0)]),
+            ("fish", vec![(0, 1), (0, 2), (1, 0), (1, 1), (1, 2), (2, 1)]),
         ] {
             for p in placements(&shape) {
                 assert!(stamped2.contains(&p), "{name} placement missing: {p:?}");
