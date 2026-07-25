@@ -1907,6 +1907,85 @@ impl NTupleNet {
         acc / (p * n_z) as f64
     }
 
+    /// Fold subset shapes into their covering positional 6-tuple tables:
+    /// staircase+bigL -> t321, plus+2x2 -> fish (fallback pos-2x3), tiny
+    /// lines/pairs -> rows, bent triominoes -> fish/pos-2x3. Orbit-to-orbit:
+    /// folding one rep of a small family into one covering image adds, via
+    /// the shared dihedral image lists, exactly the whole small orbit's
+    /// contribution across the big orbit (group closure), so V is unchanged.
+    /// Folded images are dropped; eval cost falls accordingly. In-memory
+    /// transform only — never save a folded net. Returns #images removed.
+    pub fn fold(&mut self) -> usize {
+        let m = self.m;
+        let collinear = |cells: &[u8]| {
+            let rows: Vec<usize> = cells.iter().map(|&c| c as usize / N).collect();
+            let cols: Vec<usize> = cells.iter().map(|&c| c as usize % N).collect();
+            rows.iter().all(|&r| r == rows[0]) || cols.iter().all(|&c| c == cols[0])
+        };
+        let has = |imgs: &[Image], g: u8| imgs.iter().any(|i| i.group == g);
+        let mut removed = vec![false; self.images.len()];
+        let mut folded = 0usize;
+        for b in (0..self.images.len()).step_by(8) {
+            let img = &self.images[b];
+            // candidate target groups, in preference order
+            let cands: &[u8] = match img.group {
+                G_STAIR | G_DIAG => &[G_T321],
+                G_BIGL => &[G_T321],
+                G_PLUS => &[G_FISH],
+                G_SQ2 => &[G_FISH, G_BLK23],
+                G_TINY => {
+                    if collinear(&img.cells) {
+                        &[G_ROWS]
+                    } else {
+                        &[G_FISH, G_BLK23]
+                    }
+                }
+                _ => &[],
+            };
+            if img.group == G_DIAG {
+                continue; // diagonals have no covering shape
+            }
+            let Some(&tg) = cands.iter().find(|&&g| {
+                // only positional targets are exact: pos-2x3 required
+                (g != G_BLK23 || self.cfg.pos_2x3) && has(&self.images, g)
+            }) else {
+                continue;
+            };
+            let small: Vec<u8> = img.cells.clone();
+            let Some(big) = self
+                .images
+                .iter()
+                .find(|j| j.group == tg && small.iter().all(|c| j.cells.contains(c)))
+            else {
+                continue;
+            };
+            let p: Vec<usize> = small
+                .iter()
+                .map(|c| big.cells.iter().position(|bc| bc == c).unwrap())
+                .collect();
+            let kb = big.cells.len();
+            let (src_t, dst_t) = (img.table, big.table);
+            let srcw = self.tables[src_t].w.clone();
+            let pw: Vec<usize> = (0..kb).map(|j| m.pow((kb - 1 - j) as u32)).collect();
+            let dstw = &mut self.tables[dst_t].w;
+            for (e, w) in dstw.iter_mut().enumerate() {
+                let mut si = 0usize;
+                for &pj in &p {
+                    si = si * m + (e / pw[pj]) % m;
+                }
+                *w += srcw[si];
+            }
+            for r in removed.iter_mut().skip(b).take(8) {
+                *r = true;
+            }
+            folded += 8;
+        }
+        let mut it = removed.iter();
+        self.images.retain(|_| !it.next().unwrap());
+        self.recount_active();
+        folded
+    }
+
     /// Greedy move: argmax over legal moves of reward + V(afterstate).
     /// Returns (move, reward, afterstate codes).
     pub fn greedy(&self, b: &Board) -> Option<(Move, f64, [u8; CELLS])> {
@@ -2635,6 +2714,42 @@ mod tests {
             let (ti, tn) = net.global_indices(&tc);
             assert_eq!(gn, tn);
             assert_eq!(gi[..gn], ti[..tn], "transform {t}");
+        }
+    }
+
+    #[test]
+    fn fold_preserves_value() {
+        let mut cfg = NetConfig::base();
+        cfg.alphabet = Alphabet::Coarse;
+        cfg.staircase = true;
+        cfg.pos_2x3 = true;
+        cfg.extra = EX_BIGL | EX_T321 | EX_FISH | EX_TINY;
+        let mut net = NTupleNet::new(1.0, cfg);
+        // give every table nonzero content via a few noisy games
+        let mut b = Board::new_game(3);
+        for _ in 0..60 {
+            match net.greedy(&b) {
+                Some((mv, r, after)) => {
+                    net.update(&after, r + 25.0);
+                    b.apply(&mv);
+                }
+                None => break,
+            }
+        }
+        let boards: Vec<[u8; CELLS]> = (0..40)
+            .map(|s| net.encode(&Board::new_game(200 + s).cells))
+            .collect();
+        let before: Vec<f64> = boards.iter().map(|c| net.value(c)).collect();
+        let n_img = net.images.len();
+        let folded = net.fold();
+        assert!(folded > 0, "nothing folded");
+        assert_eq!(net.images.len(), n_img - folded);
+        for (c, bv) in boards.iter().zip(&before) {
+            let av = net.value(c);
+            assert!(
+                (av - bv).abs() < 1e-3 * (1.0 + bv.abs()),
+                "fold changed value: {bv} -> {av}"
+            );
         }
     }
 

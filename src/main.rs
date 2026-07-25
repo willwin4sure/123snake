@@ -642,6 +642,24 @@ fn cmd_ntuple(args: &[String]) {
             t0.elapsed().as_secs_f64()
         );
     }
+    if args.iter().any(|a| a == "--fold") {
+        // validate on sample boards, then fold and re-validate
+        let probes: Vec<_> = (0..200)
+            .map(|s| net.encode(&Board::new_game(900_000 + s).cells))
+            .collect();
+        let before: Vec<f64> = probes.iter().map(|c| net.value(c)).collect();
+        let t0 = std::time::Instant::now();
+        let folded = net.fold();
+        let mut maxd = 0.0f64;
+        for (c, bv) in probes.iter().zip(&before) {
+            maxd = maxd.max((net.value(c) - bv).abs());
+        }
+        eprintln!(
+            "folded {folded} images in {:.1}s; max |dV| over 200 boards = {maxd:.4}",
+            t0.elapsed().as_secs_f64()
+        );
+        assert!(maxd < 1.0, "fold validation failed");
+    }
     if args.iter().any(|a| a == "--project") {
         let t0 = std::time::Instant::now();
         net.consistency_project();
@@ -843,8 +861,6 @@ fn cmd_ntuple(args: &[String]) {
         // (only the levels vector is swapped per config).
         let net = match arg_val(args, "--exp-grid") {
             Some(gridspec) => {
-                use integer_snake::ntuple::NTupleSearchPolicy;
-                use integer_snake::search::Policy;
                 type Cfg = (String, String, Option<Vec<(usize, u32)>>);
                 let cfgs: Vec<Cfg> = gridspec
                     .split(',')
@@ -865,46 +881,85 @@ fn cmd_ntuple(args: &[String]) {
                     })
                     .collect();
                 let progress = args.iter().any(|a| a == "--progress");
-                let mut pol = NTupleSearchPolicy::with_levels(net, vec![(1, 1)], 99);
+                // parallel over seeds: each thread plays its seed slice
+                // through every config; per-(config,game) rng is seeded
+                // deterministically, so results are identical at any
+                // thread count. secs are summed CPU-time per config, so
+                // ms/mv keeps single-thread per-move semantics.
+                let nt: u32 = arg_val(args, "--threads")
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(1);
+                let chunk = eval_games.div_ceil(nt);
+                let netr = &net;
+                let cfgr = &cfgs;
+                type Acc = (Vec<Vec<u64>>, Vec<f64>, Vec<u64>);
+                let accs: Vec<Acc> = std::thread::scope(|sp| {
+                    let handles: Vec<_> = (0..nt)
+                        .map(|t| {
+                            sp.spawn(move || {
+                                let g0 = t * chunk;
+                                let g1 = (g0 + chunk).min(eval_games);
+                                let mut sc: Vec<Vec<u64>> = vec![Vec::new(); cfgr.len()];
+                                let mut se = vec![0.0f64; cfgr.len()];
+                                let mut mv_ = vec![0u64; cfgr.len()];
+                                for g in g0..g1 {
+                                    for (i, (name, _, levels)) in cfgr.iter().enumerate() {
+                                        let t0 = std::time::Instant::now();
+                                        let mut b = Board::new_game(eval_seed0 + g);
+                                        match levels {
+                                            None => {
+                                                while let Some((m2, _, _)) = netr.greedy(&b) {
+                                                    b.apply(&m2);
+                                                }
+                                            }
+                                            Some(lv) => {
+                                                let mut rng = Mulberry32::new(
+                                                    (i as u32)
+                                                        .wrapping_mul(1_000_003)
+                                                        .wrapping_add(g),
+                                                );
+                                                while let Some(m2) =
+                                                    integer_snake::ntuple::search_best(
+                                                        netr, &b, lv, &mut rng,
+                                                    )
+                                                    .map(|(m2, _)| m2)
+                                                {
+                                                    b.apply(&m2);
+                                                }
+                                            }
+                                        }
+                                        se[i] += t0.elapsed().as_secs_f64();
+                                        sc[i].push(b.score);
+                                        mv_[i] += b.moves_made as u64;
+                                        if progress {
+                                            let tot: u64 = sc[i].iter().sum();
+                                            eprintln!(
+                                                "PROG {} {} {} {:.1} {} {:.0} {}",
+                                                name,
+                                                sc[i].len(),
+                                                eval_games,
+                                                tot as f64 / sc[i].len() as f64,
+                                                b.score,
+                                                se[i],
+                                                b.moves_made
+                                            );
+                                        }
+                                    }
+                                }
+                                (sc, se, mv_)
+                            })
+                        })
+                        .collect();
+                    handles.into_iter().map(|h| h.join().unwrap()).collect()
+                });
                 let mut scores: Vec<Vec<u64>> = vec![Vec::new(); cfgs.len()];
                 let mut secs = vec![0.0f64; cfgs.len()];
                 let mut moves = vec![0u64; cfgs.len()];
-                for g in 0..eval_games {
-                    for (i, (name, _, levels)) in cfgs.iter().enumerate() {
-                        let t0 = std::time::Instant::now();
-                        let mut b = Board::new_game(eval_seed0 + g);
-                        match levels {
-                            None => {
-                                while let Some((mv, _, _)) = pol.net.greedy(&b) {
-                                    b.apply(&mv);
-                                }
-                            }
-                            Some(lv) => {
-                                pol.levels = lv.clone();
-                                pol.rng = Mulberry32::new(
-                                    (i as u32).wrapping_mul(1_000_003).wrapping_add(g),
-                                );
-                                while let Some(mv) = pol.choose(&b) {
-                                    b.apply(&mv);
-                                }
-                            }
-                        }
-                        secs[i] += t0.elapsed().as_secs_f64();
-                        scores[i].push(b.score);
-                        moves[i] += b.moves_made as u64;
-                        if progress {
-                            let tot: u64 = scores[i].iter().sum();
-                            eprintln!(
-                                "PROG {} {} {} {:.1} {} {:.0} {}",
-                                name,
-                                g + 1,
-                                eval_games,
-                                tot as f64 / scores[i].len() as f64,
-                                b.score,
-                                secs[i],
-                                b.moves_made
-                            );
-                        }
+                for (sc, se, mv_) in accs {
+                    for i in 0..cfgs.len() {
+                        scores[i].extend(&sc[i]);
+                        secs[i] += se[i];
+                        moves[i] += mv_[i];
                     }
                 }
                 for (i, (name, spec, _)) in cfgs.iter().enumerate() {
@@ -1106,7 +1161,7 @@ fn cmd_ntuple(args: &[String]) {
                         );
                         win_score.fetch_add(s, Relaxed);
                         win_n.fetch_add(1, Relaxed);
-                        if eval_every > 0 && (g + 1) % eval_every as u64 == 0 {
+                        if eval_every > 0 && (g + 1).is_multiple_of(eval_every as u64) {
                             let n = win_n.swap(0, Relaxed);
                             let sc = win_score.swap(0, Relaxed);
                             let netr = unsafe { &*racy.0 };
