@@ -26,6 +26,7 @@ fn main() {
         "dump" => cmd_dump(&args),
         "ntuple" => cmd_ntuple(&args),
         "serve" => cmd_serve(&args),
+        "membench" => cmd_membench(),
         other => {
             eprintln!(
                 "unknown command '{other}' (expected: eval, play, tune, calibrate, dump, ntuple)"
@@ -33,6 +34,176 @@ fn main() {
             std::process::exit(2);
         }
     }
+}
+
+/// Micro-benchmarks for table memory layouts: random reads (the eval
+/// pattern), triple-array updates (SoA, the current TD-update pattern),
+/// interleaved AoS updates, prefetched two-pass reads, and a realistic
+/// 30:1 read:update training mix. Sizes match one slim 6-tuple table.
+fn cmd_membench() {
+    use std::time::Instant;
+    const LEN: usize = 34_012_224; // 18^6
+    const OPS: usize = 20_000_000;
+    // xorshift for cheap index gen
+    let mut st = 0x9E3779B97F4A7C15u64;
+    let mut rnd = move || {
+        st ^= st << 13;
+        st ^= st >> 7;
+        st ^= st << 17;
+        (st % LEN as u64) as usize
+    };
+    let idx: Vec<usize> = (0..OPS).map(|_| rnd()).collect();
+
+    // SoA arrays (current layout)
+    let w = vec![0.5f32; LEN];
+    let mut e = vec![0.1f32; LEN];
+    let mut a = vec![0.1f32; LEN];
+    let mut wm = vec![0.5f32; LEN];
+
+    // 1) random reads, straight loop
+    let t0 = Instant::now();
+    let mut acc = 0.0f64;
+    for &i in &idx {
+        acc += w[i] as f64;
+    }
+    let d1 = t0.elapsed().as_secs_f64();
+    println!(
+        "read-SoA:            {:6.1} ns/op  (acc {acc:.1})",
+        d1 * 1e9 / OPS as f64
+    );
+
+    // 2) two-pass with prefetch, blocks of 16
+    let t0 = Instant::now();
+    let mut acc2 = 0.0f64;
+    for ch in idx.chunks(16) {
+        for &i in ch {
+            unsafe {
+                std::arch::asm!("prfm pldl1keep, [{0}]", in(reg) w.as_ptr().add(i));
+            }
+        }
+        for &i in ch {
+            acc2 += w[i] as f64;
+        }
+    }
+    let d2 = t0.elapsed().as_secs_f64();
+    println!(
+        "read-prefetch16:     {:6.1} ns/op  (acc {acc2:.1})",
+        d2 * 1e9 / OPS as f64
+    );
+
+    // 3) triple-array update (current TD write pattern)
+    let t0 = Instant::now();
+    for &i in idx.iter().take(OPS / 4) {
+        let dl = 0.01f32;
+        wm[i] += dl;
+        e[i] += dl;
+        a[i] += dl.abs();
+    }
+    let d3 = t0.elapsed().as_secs_f64();
+    println!(
+        "update-SoA(w,e,a):   {:6.1} ns/op",
+        d3 * 1e9 / (OPS / 4) as f64
+    );
+
+    // 4) AoS interleaved update
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct Ent {
+        w: f32,
+        e: f32,
+        a: f32,
+    }
+    let mut aos = vec![
+        Ent {
+            w: 0.5,
+            e: 0.1,
+            a: 0.1
+        };
+        LEN
+    ];
+    let t0 = Instant::now();
+    for &i in idx.iter().take(OPS / 4) {
+        let dl = 0.01f32;
+        let en = &mut aos[i];
+        en.w += dl;
+        en.e += dl;
+        en.a += dl.abs();
+    }
+    let d4 = t0.elapsed().as_secs_f64();
+    println!(
+        "update-AoS(12B):     {:6.1} ns/op",
+        d4 * 1e9 / (OPS / 4) as f64
+    );
+
+    // 5) realistic mix, SoA: 30 reads then 1 triple-update
+    let t0 = Instant::now();
+    let mut acc5 = 0.0f64;
+    let mut k = 0;
+    for ch in idx.chunks(31).take(OPS / 31) {
+        for &i in &ch[..ch.len().saturating_sub(1)] {
+            acc5 += wm[i] as f64;
+        }
+        if let Some(&i) = ch.last() {
+            wm[i] += 0.01;
+            e[i] += 0.01;
+            a[i] += 0.01;
+        }
+        k += ch.len();
+    }
+    let d5 = t0.elapsed().as_secs_f64();
+    println!(
+        "mix-SoA 30r:1u:      {:6.1} ns/op  (acc {acc5:.1})",
+        d5 * 1e9 / k as f64
+    );
+
+    // 6) realistic mix, AoS
+    let t0 = Instant::now();
+    let mut acc6 = 0.0f64;
+    let mut k6 = 0;
+    for ch in idx.chunks(31).take(OPS / 31) {
+        for &i in &ch[..ch.len().saturating_sub(1)] {
+            acc6 += aos[i].w as f64;
+        }
+        if let Some(&i) = ch.last() {
+            let en = &mut aos[i];
+            en.w += 0.01;
+            en.e += 0.01;
+            en.a += 0.01;
+        }
+        k6 += ch.len();
+    }
+    let d6 = t0.elapsed().as_secs_f64();
+    println!(
+        "mix-AoS 30r:1u:      {:6.1} ns/op  (acc {acc6:.1})",
+        d6 * 1e9 / k6 as f64
+    );
+
+    // 7) mix with prefetch on the read stream, SoA
+    let t0 = Instant::now();
+    let mut acc7 = 0.0f64;
+    let mut k7 = 0;
+    for ch in idx.chunks(31).take(OPS / 31) {
+        let rd = &ch[..ch.len().saturating_sub(1)];
+        for &i in rd {
+            unsafe {
+                std::arch::asm!("prfm pldl1keep, [{0}]", in(reg) wm.as_ptr().add(i));
+            }
+        }
+        for &i in rd {
+            acc7 += wm[i] as f64;
+        }
+        if let Some(&i) = ch.last() {
+            wm[i] += 0.01;
+            e[i] += 0.01;
+            a[i] += 0.01;
+        }
+        k7 += ch.len();
+    }
+    let d7 = t0.elapsed().as_secs_f64();
+    println!(
+        "mix-SoA+prefetch:    {:6.1} ns/op  (acc {acc7:.1})",
+        d7 * 1e9 / k7 as f64
+    );
 }
 
 /// Local watch server: loads an n-tuple checkpoint and serves a page where
@@ -348,6 +519,13 @@ fn cmd_ntuple(args: &[String]) {
             Some((c.parse().ok()?, a.parse().ok()?))
         })
         .unwrap_or((0.0, 1));
+    // --train-threads N: hogwild lock-free parallel TD (Jaskowski-style).
+    // Workers share the tables without locks; racy float updates lose the
+    // occasional increment, which TC-TD tolerates. Supported for the plain
+    // eps-greedy single-stage trainer only.
+    let train_threads: usize = arg_val(args, "--train-threads")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
     let eval_every: u32 = arg_val(args, "--eval-every")
         .and_then(|v| v.parse().ok())
         .unwrap_or(5000);
@@ -884,6 +1062,91 @@ fn cmd_ntuple(args: &[String]) {
             pct(0.99),
             sc[sc.len() - 1]
         );
+        return;
+    }
+    if train_threads > 1 {
+        assert!(
+            lambda == 0.0
+                && grow.is_empty()
+                && !net.promote
+                && net.cfg.stages == 1
+                && net.bonus == 0.0
+                && commit_c == 0.0,
+            "--train-threads supports the plain eps-greedy single-stage trainer"
+        );
+        use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+        let t0 = std::time::Instant::now();
+        let counter = AtomicU64::new(0);
+        let win_score = AtomicU64::new(0);
+        let win_n = AtomicU64::new(0);
+        struct Racy(*mut integer_snake::ntuple::NTupleNet);
+        unsafe impl Sync for Racy {}
+        let racy = Racy(&mut net as *mut _);
+        std::thread::scope(|sp| {
+            for _ in 0..train_threads {
+                let racy = &racy;
+                let counter = &counter;
+                let win_score = &win_score;
+                let win_n = &win_n;
+                sp.spawn(move || {
+                    // hogwild: intentional aliasing; races on f32 cells are
+                    // benign lost updates
+                    let netp = unsafe { &mut *racy.0 };
+                    loop {
+                        let g = counter.fetch_add(1, Relaxed);
+                        if g >= games as u64 {
+                            break;
+                        }
+                        let (s, _, _) = integer_snake::ntuple::train_game_eps(
+                            netp,
+                            seed0.wrapping_add(g as u32),
+                            eps_rank,
+                            eps_rand,
+                            0.0,
+                        );
+                        win_score.fetch_add(s, Relaxed);
+                        win_n.fetch_add(1, Relaxed);
+                        if eval_every > 0 && (g + 1) % eval_every as u64 == 0 {
+                            let n = win_n.swap(0, Relaxed);
+                            let sc = win_score.swap(0, Relaxed);
+                            let netr = unsafe { &*racy.0 };
+                            // parallel eval inside the drawing worker
+                            let nt = 4u32;
+                            let chunk = eval_games.div_ceil(nt);
+                            let ev: f64 = std::thread::scope(|ep| {
+                                let hs: Vec<_> = (0..nt)
+                                    .map(|t| {
+                                        let s0 = eval_seed0 + t * chunk;
+                                        let nn =
+                                            chunk.min(eval_games.saturating_sub(t * chunk));
+                                        ep.spawn(move || {
+                                            integer_snake::ntuple::eval_scores(netr, s0, nn)
+                                                .into_iter()
+                                                .sum::<u64>()
+                                        })
+                                    })
+                                    .collect();
+                                hs.into_iter().map(|h| h.join().unwrap()).sum::<u64>()
+                                    as f64
+                                    / eval_games as f64
+                            });
+                            println!(
+                                "game {:>7}  train-mean {:>6.1}  eval-greedy {:>6.1}  nonzero {:>9}  {:>5.0}s",
+                                g + 1,
+                                sc as f64 / n.max(1) as f64,
+                                ev,
+                                netr.nonzero(),
+                                t0.elapsed().as_secs_f64()
+                            );
+                        }
+                    }
+                });
+            }
+        });
+        if let Some(p) = &save {
+            net.save(p).expect("save");
+            println!("saved {p}");
+        }
         return;
     }
     let t0 = std::time::Instant::now();
