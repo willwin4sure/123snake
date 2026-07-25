@@ -1,0 +1,3 @@
+AC7-10M unfolded @30k | eval n=30000 seed0=15000  mean 3644.5  p10 624  p50 3049  p90 7668  p99 11360  max 17562
+folded 344 images in 4.6s; max |dV| over 200 boards = 0.0001
+AC7-10M FOLDED @30k | eval n=30000 seed0=15000  mean 3644.8  p10 624  p50 3049  p90 7668  p99 11362  max 17562

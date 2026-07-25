@@ -1,0 +1,26 @@
+greedy | greedy | secs=17 | eval n=500 seed0=15000  mean 3534.8  p10 545  p50 2934  p90 7804  p99 11160  max 12722 | moves=118168 ms/mv=0.14
+d2-4x9 | 4:9 | secs=354 | eval n=500 seed0=15000  mean 4386.0  p10 716  p50 3867  p90 8805  p99 11959  max 14776 | moves=140108 ms/mv=2.53
+d2-4x27 | 4:27 | secs=461 | eval n=500 seed0=15000  mean 4811.7  p10 831  p50 4134  p90 9891  p99 12815  max 14930 | moves=152361 ms/mv=3.03
+d2-4x48 | 4:48 | secs=485 | eval n=500 seed0=15000  mean 4877.1  p10 841  p50 4341  p90 9615  p99 13304  max 17594 | moves=153945 ms/mv=3.15
+d2-4x96 | 4:96 | secs=504 | eval n=500 seed0=15000  mean 4713.8  p10 929  p50 4057  p90 10032  p99 12368  max 16026 | moves=149606 ms/mv=3.37
+d2-8x9 | 8:9 | secs=642 | eval n=500 seed0=15000  mean 4218.8  p10 826  p50 3825  p90 8575  p99 11448  max 13766 | moves=135734 ms/mv=4.73
+d2-8x27 | 8:27 | secs=816 | eval n=500 seed0=15000  mean 4597.4  p10 836  p50 3783  p90 9559  p99 13029  max 16862 | moves=146229 ms/mv=5.58
+d2-8x48 | 8:48 | secs=860 | eval n=500 seed0=15000  mean 4695.5  p10 911  p50 4221  p90 9428  p99 12705  max 14390 | moves=149424 ms/mv=5.76
+d2-8x96 | 8:96 | secs=943 | eval n=500 seed0=15000  mean 4855.4  p10 852  p50 4220  p90 9887  p99 12428  max 14599 | moves=153952 ms/mv=6.12
+d2-12x9 | 12:9 | secs=908 | eval n=500 seed0=15000  mean 4371.8  p10 728  p50 3614  p90 9488  p99 12291  max 16274 | moves=139057 ms/mv=6.53
+d2-12x27 | 12:27 | secs=1173 | eval n=500 seed0=15000  mean 4741.6  p10 828  p50 4259  p90 9647  p99 12728  max 14098 | moves=150237 ms/mv=7.81
+d2-12x48 | 12:48 | secs=1172 | eval n=500 seed0=15000  mean 4532.9  p10 703  p50 3900  p90 9019  p99 13369  max 18049 | moves=144305 ms/mv=8.12
+d2-12x96 | 12:96 | secs=1273 | eval n=500 seed0=15000  mean 4546.0  p10 758  p50 3937  p90 9669  p99 12924  max 15038 | moves=145143 ms/mv=8.77
+d2-16x9 | 16:9 | secs=1180 | eval n=500 seed0=15000  mean 4470.5  p10 697  p50 3973  p90 9274  p99 12280  max 14630 | moves=141743 ms/mv=8.32
+d2-16x27 | 16:27 | secs=1500 | eval n=500 seed0=15000  mean 4803.5  p10 815  p50 4239  p90 9678  p99 12989  max 13721 | moves=152555 ms/mv=9.83
+d2-16x48 | 16:48 | secs=1529 | eval n=500 seed0=15000  mean 4641.8  p10 842  p50 3895  p90 9674  p99 13015  max 16742 | moves=148034 ms/mv=10.33
+d2-16x96 | 16:96 | secs=1649 | eval n=500 seed0=15000  mean 4662.1  p10 862  p50 4069  p90 9750  p99 12561  max 14008 | moves=149164 ms/mv=11.05
+d2-24x9 | 24:9 | secs=1673 | eval n=500 seed0=15000  mean 4624.1  p10 759  p50 4223  p90 9378  p99 12398  max 14470 | moves=146109 ms/mv=11.45
+d2-24x27 | 24:27 | secs=2145 | eval n=500 seed0=15000  mean 4823.7  p10 944  p50 4167  p90 10405  p99 13739  max 17292 | moves=152363 ms/mv=14.08
+d2-24x48 | 24:48 | secs=2163 | eval n=500 seed0=15000  mean 4604.7  p10 833  p50 4011  p90 9787  p99 12982  max 14083 | moves=146517 ms/mv=14.76
+d2-24x96 | 24:96 | secs=2371 | eval n=500 seed0=15000  mean 4681.7  p10 888  p50 4239  p90 9627  p99 12403  max 13041 | moves=148738 ms/mv=15.94
+d2-32x9 | 32:9 | secs=1968 | eval n=500 seed0=15000  mean 4354.1  p10 584  p50 3795  p90 9188  p99 12326  max 13416 | moves=137931 ms/mv=14.27
+d2-32x27 | 32:27 | secs=2713 | eval n=500 seed0=15000  mean 4541.7  p10 734  p50 4006  p90 9295  p99 12875  max 16284 | moves=144886 ms/mv=18.72
+d2-32x48 | 32:48 | secs=2996 | eval n=500 seed0=15000  mean 4862.8  p10 730  p50 4151  p90 10047  p99 13720  max 15689 | moves=153307 ms/mv=19.54
+d2-32x96 | 32:96 | secs=3272 | eval n=500 seed0=15000  mean 4763.3  p10 829  p50 4188  p90 9678  p99 12455  max 14711 | moves=151082 ms/mv=21.66
+ALLDONE
