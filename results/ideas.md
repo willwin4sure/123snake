@@ -19,12 +19,13 @@ results/; this file tracks the research frontier.)
 - **run42 shape family** (after run42's +263): variants of the
   line-plus-support motif — 3+2, 5+2 (if it fits), 4+3, double-flanked
   4-run, offset variants; positional (per-orbit) run42 tables.
-- **Memory-layout/throughput levers** (2026-07-24, analyzed): hogwild
-  lock-free parallel TD (Jaskowski precedent, ~8x per-arm training —
-  the big one); AoS (w,e,a) interleave for 3->1 update misses (trade:
-  3x worse read-side hot-entry density, measure); two-pass index+
-  prefetch eval (10-30%). DONE: --threads N parallel eval (5.4x).
-  Not viable: hugepages on macOS/ARM; f16 for TD.
+- **Memory-layout/throughput levers** (2026-07-24, MEASURED via
+  `snake membench`): realistic 30:1 read:update mix is layout-invariant
+  (3.9 ns/op SoA = AoS = prefetch; OoO already hides latency) — AoS
+  refactor and prefetch NOT worth it (AoS only wins 33% on pure
+  updates). DONE: --threads N parallel eval (5.4x); --train-threads N
+  hogwild trainer (validation in progress). Not viable: hugepages on
+  macOS/ARM; f16 for TD.
 - **TDLeaf-style fine-tune**: search-in-training; update at PV leaves /
   realized-path leaves toward search-backed targets. Cheap version:
   fine-tune a champion a few 100k games with 4x27-class search.
