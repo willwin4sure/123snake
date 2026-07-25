@@ -24,7 +24,8 @@ results/; this file tracks the research frontier.)
   (3.9 ns/op SoA = AoS = prefetch; OoO already hides latency) — AoS
   refactor and prefetch NOT worth it (AoS only wins 33% on pure
   updates). DONE: --threads N parallel eval (5.4x); --train-threads N
-  hogwild trainer (validation in progress). Not viable: hugepages on
+  hogwild trainer VALIDATED: 4.2x at 4 threads (perfect), 6.8x at 8
+  (85% eff), zero quality loss (1822/1837/1820 at 200k games). Not viable: hugepages on
   macOS/ARM; f16 for TD.
 - **TDLeaf-style fine-tune**: search-in-training; update at PV leaves /
   realized-path leaves toward search-backed targets. Cheap version:
