@@ -220,7 +220,12 @@ fn cmd_serve(args: &[String]) {
         .and_then(|v| v.parse().ok())
         .unwrap_or(8271);
     eprintln!("loading {model} ...");
-    let net = NTupleNet::load(&model, 1.0).expect("load model");
+    let mut net = NTupleNet::load(&model, 1.0).expect("load model");
+    if args.iter().any(|a| a == "--fold") {
+        let folded = net.fold();
+        eprintln!("folded {folded} images");
+    }
+    let net = net;
     eprintln!("{} params; http://127.0.0.1:{port}/", net.params());
 
     let html = include_str!("../solver/watch.html");
