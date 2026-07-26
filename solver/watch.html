@@ -157,7 +157,7 @@
     <button id="mute">Sound: on</button>
     <div class="speed">
       <span class="lbl">Speed</span>
-      <input type="range" id="speed" min="0" max="4" step="1" value="2">
+      <input type="range" id="speed" min="0" max="6" step="1" value="2">
       <output id="speedout"></output>
     </div>
   </div>
@@ -561,12 +561,12 @@
     api('/state'+botQ('?')).then(function(st){if(!st.err)setStat(st);});
   };
   var speedEl=document.getElementById('speed');
-  var SPEEDS=[900,500,300,150,80];
+  var SPEEDS=[900,500,300,150,80,40,20];
   // animation scale, sized so animation + pauses fit the per-move budget
   function animF(){return Math.min(1,Math.max(.06,delayMs()*.65/560))}
   function delayMs(){return SPEEDS[+speedEl.value]}
   function speedUi(){
-    speedEl.style.setProperty('--fill',(+speedEl.value/4*100)+'%');
+    speedEl.style.setProperty('--fill',(+speedEl.value/6*100)+'%');
     document.getElementById('speedout').textContent=delayMs()+' ms';
   }
   speedEl.oninput=speedUi; speedUi();
