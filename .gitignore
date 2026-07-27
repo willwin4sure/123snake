@@ -5,3 +5,4 @@ ml/*.pt
 .DS_Store
 ml/*.bin
 .claude/
+ml/data/
