@@ -253,10 +253,12 @@ def make_batch(states, rows, idxs, t):
 
 
 class Net(nn.Module):
-    def __init__(self, ch=64):
+    def __init__(self, ch=64, blocks=4):
         super().__init__()
         self.stem = nn.Conv2d(14, ch, 3, padding=1)
-        self.blocks = nn.ModuleList([nn.Conv2d(ch, ch, 3, padding=1) for _ in range(4)])
+        self.blocks = nn.ModuleList(
+            [nn.Conv2d(ch, ch, 3, padding=1) for _ in range(blocks)]
+        )
         self.start_head = nn.Conv2d(ch, 1, 1)
         self.dir_head = nn.Conv2d(ch, 5, 1)
         self.val_conv = nn.Conv2d(ch, 8, 1)
@@ -287,6 +289,10 @@ def main():
     data_path = sys.argv[1] if len(sys.argv) > 1 else "ml/data/qdump-ac7-400g.jsonl"
     epochs = int(sys.argv[2]) if len(sys.argv) > 2 else 4
     tau = float(sys.argv[3]) if len(sys.argv) > 3 else 50.0
+    ch = int(sys.argv[4]) if len(sys.argv) > 4 else 64
+    blocks = int(sys.argv[5]) if len(sys.argv) > 5 else 4
+    run = sys.argv[6] if len(sys.argv) > 6 else f"q{ch}x{blocks}"
+    ckpt_path = f"ml/qnet-{run}.pt"
     dev = "mps" if torch.backends.mps.is_available() else "cpu"
     print(f"loading {data_path} (tau {tau}) ...", flush=True)
     states = load(data_path, tau)
@@ -300,7 +306,7 @@ def main():
     print(f"{len(tr_states)} train states / {len(val_states)} val; "
           f"{len(tr_rows)} rows", flush=True)
 
-    net = Net().to(dev)
+    net = Net(ch=ch, blocks=blocks).to(dev)
     opt = torch.optim.AdamW(net.parameters(), lr=3e-4, weight_decay=1e-4)
     BS = 512
 
@@ -369,10 +375,38 @@ def main():
             vp = torch.cat(vp).numpy()
             vt = torch.cat(vt).numpy()
             corr = float(np.corrcoef(vp, vt)[0, 1])
-            print(f"  val: value corr {corr:.3f}  start top1 "
-                  f"{s_hit / max(1, s_n):.3f}", flush=True)
-        torch.save(net.state_dict(), "ml/qnet.pt")
-    print("saved ml/qnet.pt", flush=True)
+            top1 = s_hit / max(1, s_n)
+            print(f"  val: value corr {corr:.3f}  start top1 {top1:.3f}",
+                  flush=True)
+        torch.save(net.state_dict(), ckpt_path)
+        play_mean = None
+        try:
+            import subprocess
+            out = subprocess.run(
+                [sys.executable, "ml/play_q.py", "20", ckpt_path, "policy",
+                 str(ch), str(blocks)],
+                capture_output=True, text=True, timeout=600,
+            ).stdout
+            for tok in out.split():
+                if tok == "mean":
+                    continue
+            import re as _re
+            m = _re.search(r"mean ([\d.]+)", out)
+            if m:
+                play_mean = float(m.group(1))
+        except Exception:
+            pass
+        with open("ml/data/nn-metrics.jsonl", "a") as mf:
+            mf.write(json.dumps({
+                "run": run, "epoch": ep + 1,
+                "kl_start": round(agg.get("kl_start", 0) / nb, 4),
+                "kl_dir": round(agg.get("kl_dir", 0) / nb, 4),
+                "v_mse": round(agg.get("v_mse", 0) / nb, 4),
+                "corr": round(corr, 4), "top1": round(top1, 4),
+                "play20": play_mean,
+            }) + "\n")
+        print(f"  play20 {play_mean}", flush=True)
+    print(f"saved {ckpt_path}", flush=True)
 
 
 if __name__ == "__main__":

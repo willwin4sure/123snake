@@ -6,11 +6,15 @@ results/; this file tracks the research frontier.)
 
 ## Open (untested)
 
-- **CNN distillation upgrades** (after POC v2's weak 243/196 play at
-  corr 0.739): bigger trunk (128ch x 8 res blocks), 10x data, predict
-  the per-move Q MAP directly (skip refill sampling at play), DAgger
-  iterations on net-visited states. POC infra: --dump-q, ml/train_q.py,
-  ml/play_q.py.
+- **CNN distillation upgrades**: q64x4 (156k params) played 243 @ corr
+  0.739; q128x8 (1.2M params, 20 epochs) played 537 @ corr 0.871 —
+  capacity scaling works (8x params -> 2.2x play) but still ~15% of
+  teacher 3535. Data = 400 argmax-d2 self-play games, NO exploration
+  (main weakness: compounding off-distribution drift). Next: eps in the
+  dumper, 10x data, per-move Q-MAP head (skip refill sampling at play),
+  DAgger rounds, 5-10M param trunk. Live tracker: nn-dash port 8276
+  (metrics ml/data/nn-metrics.jsonl, scratchpad sync). Infra: --dump-q,
+  ml/train_q.py (ch/blocks/run args), ml/play_q.py (policy|value).
 - **CNN + n-tuple hybrid** (2026-07-23): V = n-tuple tables + small CNN
   residual, trained jointly by TD. Tables give cheap bulk value; the CNN
   learns global geometry the tuples can't see (our hand-built globals —

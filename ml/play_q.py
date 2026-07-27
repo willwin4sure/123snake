@@ -152,7 +152,9 @@ def main():
     games = int(sys.argv[1]) if len(sys.argv) > 1 else 200
     ckpt = sys.argv[2] if len(sys.argv) > 2 else "ml/qnet.pt"
     dev = "mps" if torch.backends.mps.is_available() else "cpu"
-    net = Net().to(dev)
+    ch = int(sys.argv[4]) if len(sys.argv) > 4 else 64
+    blocks = int(sys.argv[5]) if len(sys.argv) > 5 else 4
+    net = Net(ch=ch, blocks=blocks).to(dev)
     net.load_state_dict(torch.load(ckpt, map_location=dev))
     net.eval()
     mode = sys.argv[3] if len(sys.argv) > 3 else "policy"
