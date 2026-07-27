@@ -147,9 +147,13 @@ def transform_dir(d, t):
 DIR_MAP = [[transform_dir(d, t) for d in range(5)] for t in range(8)]
 
 
+MASS_MIN = 0.02
+
+
 def load(path, tau):
-    """Per state: cells, argmax path, soft start dist, per-prefix dir dists,
-    value target log2(1+maxQ)."""
+    """Per state: cells, soft start dist, prefix rows over the WHOLE move
+    trie (mass >= MASS_MIN or on the argmax spine), each carrying its dir
+    conditional, its mass, and V(prefix) = max Q over completions."""
     states = []
     with open(path) as f:
         for line in f:
@@ -163,28 +167,34 @@ def load(path, tau):
             sd = np.zeros(CELLS, dtype=np.float32)
             for pa, pj in zip(paths, p):
                 sd[pa[0]] += pj
-            dir_rows = []
-            for step in range(1, len(best) + 1):
-                prefix = best[:step]
-                mass = 0.0
-                dd = np.zeros(5, dtype=np.float64)
-                for pa, pj in zip(paths, p):
-                    if pa[: len(prefix)] != prefix:
-                        continue
-                    mass += pj
-                    if len(pa) == len(prefix):
-                        dd[FINISH] += pj
+            trie = {}
+            for j, pa in enumerate(paths):
+                for L in range(1, len(pa) + 1):
+                    u = pa[:L]
+                    e = trie.setdefault(u, [0.0, -1e18, np.zeros(5)])
+                    e[0] += p[j]
+                    e[1] = max(e[1], qs[j])
+                    if len(pa) == L:
+                        e[2][FINISH] += p[j]
                     else:
-                        nxt = pa[len(prefix)]
-                        h = prefix[-1]
+                        nxt = pa[L]
+                        h = u[-1]
                         ndr, ndc = nxt // N - h // N, nxt % N - h % N
                         for d, (xr, xc) in DELTAS.items():
                             if (xr, xc) == (ndr, ndc):
-                                dd[d] += pj
+                                e[2][d] += p[j]
                                 break
-                if mass <= 0:
-                    break
-                dir_rows.append((prefix, (dd / mass).astype(np.float32)))
+            dir_rows = []
+            for u, (mass, vmax, dd) in trie.items():
+                on_spine = best[: len(u)] == u
+                if mass < MASS_MIN and not on_spine:
+                    continue
+                dir_rows.append((
+                    u,
+                    (dd / max(mass, 1e-12)).astype(np.float32),
+                    float(mass),
+                    math.log2(1.0 + max(vmax, 0.0)),
+                ))
             y = math.log2(1.0 + max(qs.max(), 0.0))
             states.append((cells, best, sd, dir_rows, y))
     return states
@@ -192,7 +202,7 @@ def load(path, tau):
 
 def expand(states):
     rows = []
-    for si, (_, best, _, dir_rows, _) in enumerate(states):
+    for si, (_, _, _, dir_rows, _) in enumerate(states):
         rows.append((si, 0))
         for k in range(len(dir_rows)):
             rows.append((si, k + 1))
@@ -214,6 +224,7 @@ def make_batch(states, rows, idxs, t):
     dir_msk = np.zeros((B, 5), dtype=bool)
     has_val = np.zeros(B, dtype=bool)
     val_tgt = np.zeros(B, dtype=np.float32)
+    wgt = np.ones(B, dtype=np.float32)
 
     perm = PERMS[t]
     for bi, ri in enumerate(idxs):
@@ -227,7 +238,10 @@ def make_batch(states, rows, idxs, t):
             start_dist[bi, perm] = sd
             start_msk[bi, perm] = start_mask(cells)
         else:
-            prefix, dd = dir_rows[step - 1]
+            prefix, dd, mass, vmax = dir_rows[step - 1]
+            has_val[bi] = True
+            val_tgt[bi] = vmax
+            wgt[bi] = mass
             for pcell in prefix:
                 planes[bi, 9, pcell // N, pcell % N] = 1.0
             h = prefix[-1]
@@ -249,11 +263,12 @@ def make_batch(states, rows, idxs, t):
     b.dir_msk = torch.from_numpy(dir_msk)
     b.has_val = torch.from_numpy(has_val)
     b.val_tgt = torch.from_numpy(val_tgt)
+    b.wgt = torch.from_numpy(wgt)
     return b
 
 
 class Net(nn.Module):
-    def __init__(self, ch=64, blocks=4, kmode="k3"):
+    def __init__(self, ch=64, blocks=4, kmode="k3", hmode="s"):
         super().__init__()
         if kmode == "k5":
             self.stem = nn.Conv2d(14, ch, 5, padding=2)
@@ -272,8 +287,16 @@ class Net(nn.Module):
             self.blocks = nn.ModuleList(
                 [nn.Conv2d(ch, ch, 3, padding=1) for _ in range(blocks)]
             )
-        self.start_head = nn.Conv2d(ch, 1, 1)
-        self.dir_head = nn.Conv2d(ch, 5, 1)
+        if hmode == "d":
+            self.start_head = nn.Sequential(
+                nn.Conv2d(ch, 64, 3, padding=1), nn.ReLU(),
+                nn.Conv2d(64, 1, 1))
+            self.dir_head = nn.Sequential(
+                nn.Conv2d(ch, 64, 3, padding=1), nn.ReLU(),
+                nn.Conv2d(64, 5, 1))
+        else:
+            self.start_head = nn.Conv2d(ch, 1, 1)
+            self.dir_head = nn.Conv2d(ch, 5, 1)
         self.val_conv = nn.Conv2d(ch, 8, 1)
         self.val_fc = nn.Linear(8 * CELLS, 1)
 
@@ -306,6 +329,7 @@ def main():
     blocks = int(sys.argv[5]) if len(sys.argv) > 5 else 4
     run = sys.argv[6] if len(sys.argv) > 6 else f"q{ch}x{blocks}"
     kmode = sys.argv[7] if len(sys.argv) > 7 else "k3"
+    hmode = sys.argv[8] if len(sys.argv) > 8 else "s"
     ckpt_path = f"ml/qnet-{run}.pt"
     dev = "mps" if torch.backends.mps.is_available() else "cpu"
     print(f"loading {data_path} (tau {tau}) ...", flush=True)
@@ -320,7 +344,7 @@ def main():
     print(f"{len(tr_states)} train states / {len(val_states)} val; "
           f"{len(tr_rows)} rows", flush=True)
 
-    net = Net(ch=ch, blocks=blocks, kmode=kmode).to(dev)
+    net = Net(ch=ch, blocks=blocks, kmode=kmode, hmode=hmode).to(dev)
     opt = torch.optim.AdamW(net.parameters(), lr=3e-4, weight_decay=1e-4)
     BS = 512
 
@@ -344,11 +368,16 @@ def main():
             logs["v_mse"] = v_err.item()
         nd = ~b.is_start.to(dev)
         if nd.any():
+            w = b.wgt.to(dev)[nd]
+            w = w / w.sum().clamp_min(1e-9)
             hd = b.head_idx.to(dev)[nd]
             dl = dirs[nd].gather(1, hd[:, None, None].expand(-1, 1, 5)).squeeze(1)
             kl_d = masked_kl(dl, b.dir_msk.to(dev)[nd], b.dir_dist.to(dev)[nd])
-            loss = loss + kl_d.mean()
-            logs["kl_dir"] = kl_d.mean().item()
+            loss = loss + (kl_d * w).sum()
+            logs["kl_dir"] = (kl_d * w).sum().item()
+            v_err2 = (val[nd] - b.val_tgt.to(dev)[nd]).pow(2)
+            loss = loss + (v_err2 * w).sum()
+            logs["v_mse_prefix"] = (v_err2 * w).sum().item()
         return loss, logs, (start, dirs, val, b)
 
     for ep in range(epochs):
@@ -398,7 +427,7 @@ def main():
             import subprocess
             out = subprocess.run(
                 [sys.executable, "ml/play_q.py", "20", ckpt_path, "policy",
-                 str(ch), str(blocks), kmode],
+                 str(ch), str(blocks), kmode, hmode],
                 capture_output=True, text=True, timeout=600,
             ).stdout
             for tok in out.split():

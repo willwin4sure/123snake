@@ -12,8 +12,8 @@ import numpy as np
 import torch
 
 sys.path.insert(0, "ml")
-from train_q import (CELLS, DELTAS, FINISH, N, Net, dir_mask, embed_cells,
-                     start_mask)
+from train_q2 import (CELLS, DELTAS, FINISH, N, Net, dir_mask, embed_cells,
+                      start_mask)
 
 
 def legal_start(cells, i):
@@ -154,7 +154,9 @@ def main():
     dev = "mps" if torch.backends.mps.is_available() else "cpu"
     ch = int(sys.argv[4]) if len(sys.argv) > 4 else 64
     blocks = int(sys.argv[5]) if len(sys.argv) > 5 else 4
-    net = Net(ch=ch, blocks=blocks).to(dev)
+    kmode = sys.argv[6] if len(sys.argv) > 6 else "k3"
+    hmode = sys.argv[7] if len(sys.argv) > 7 else "s"
+    net = Net(ch=ch, blocks=blocks, kmode=kmode, hmode=hmode).to(dev)
     net.load_state_dict(torch.load(ckpt, map_location=dev))
     net.eval()
     mode = sys.argv[3] if len(sys.argv) > 3 else "policy"
