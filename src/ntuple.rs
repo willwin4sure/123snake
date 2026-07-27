@@ -2010,6 +2010,57 @@ impl NTupleNet {
 /// calibrates V on off-policy moves (the probe's rank bias). Returns the
 /// chosen (move, reward, afterstate, explored?).
 #[allow(clippy::type_complexity)]
+/// Selection-only steering bonuses for strategy-level exploration.
+/// Mode 1: -c * avg pairwise distance of >=48 tiles (coalesce all).
+/// Mode 2: -c * distance between the two biggest tiles (giant pairing).
+/// Mode 3: +c when the biggest tile sits one-off-corner on an edge,
+/// -c when in a corner (placement counterfactual).
+pub fn commit_bonus(codes: &[u8; CELLS], a: Alphabet, mode: u8, c: f64) -> f64 {
+    match mode {
+        2 => {
+            let mut best = (0u32, 0usize);
+            let mut second = (0u32, 0usize);
+            for (i, &code) in codes.iter().enumerate() {
+                let m = code_mag(code, a);
+                if m > best.0 {
+                    second = best;
+                    best = (m, i);
+                } else if m > second.0 {
+                    second = (m, i);
+                }
+            }
+            if second.0 < 48 {
+                return 0.0;
+            }
+            let (r1, c1) = rc(best.1);
+            let (r2, c2) = rc(second.1);
+            -c * (r1.abs_diff(r2) + c1.abs_diff(c2)) as f64
+        }
+        3 => {
+            let mut best = (0u32, 0usize);
+            for (i, &code) in codes.iter().enumerate() {
+                let m = code_mag(code, a);
+                if m > best.0 {
+                    best = (m, i);
+                }
+            }
+            if best.0 < 48 {
+                return 0.0;
+            }
+            let (r, cc) = rc(best.1);
+            let (dr, dc) = (r.min(N - 1 - r), cc.min(N - 1 - cc));
+            if (dr, dc) == (0, 0) {
+                -c
+            } else if dr.min(dc) == 0 && dr.max(dc) == 1 {
+                c
+            } else {
+                0.0
+            }
+        }
+        _ => -c * big_tile_avg_dist(codes, a),
+    }
+}
+
 /// Avg pairwise Manhattan distance among cells with magnitude >= 48
 /// (0 when fewer than two). Drives the commitment exploration bonus.
 fn big_tile_avg_dist(codes: &[u8; CELLS], a: Alphabet) -> f64 {
@@ -2039,6 +2090,7 @@ fn choose_train(
     eps_rank: f32,
     eps_rand: f32,
     commit: f64,
+    commit_mode: u8,
 ) -> Option<(Move, f64, [u8; CELLS], bool)> {
     let roll = rng.next_f64() as f32;
     if roll >= eps_rank + eps_rand && commit == 0.0 {
@@ -2057,8 +2109,9 @@ fn choose_train(
         .map(|mv| {
             let sum = b.cells[mv.path[0] as usize] * mv.path.len() as u64;
             let after = net.afterstate(&codes, &mv, sum);
-            let val = sum as f64 + net.value(&after)
-                - commit * big_tile_avg_dist(&after, net.cfg.alphabet);
+            let val = sum as f64
+                + net.value(&after)
+                + commit_bonus(&after, net.cfg.alphabet, commit_mode, commit);
             (mv, sum, val)
         })
         .collect();
@@ -2087,7 +2140,7 @@ fn choose_train(
 
 /// One self-play game with TD(0) updates. Returns (score, moves).
 pub fn train_game(net: &mut NTupleNet, seed: u32) -> (u64, u32) {
-    let (s, m, _) = train_game_eps(net, seed, 0.0, 0.0, 0.0);
+    let (s, m, _) = train_game_eps(net, seed, 0.0, 0.0, 0.0, 0);
     (s, m)
 }
 
@@ -2098,12 +2151,13 @@ pub fn train_game_eps(
     eps_rank: f32,
     eps_rand: f32,
     commit: f64,
+    commit_mode: u8,
 ) -> (u64, u32, u64) {
     let mut b = Board::new_game(seed);
     let mut xrng = Mulberry32::new(seed ^ 0x9E37_79B9);
     let mut prev: Option<[u8; CELLS]> = None;
     loop {
-        match choose_train(net, &b, &mut xrng, eps_rank, eps_rand, commit) {
+        match choose_train(net, &b, &mut xrng, eps_rank, eps_rand, commit, commit_mode) {
             None => {
                 if let Some(pa) = prev {
                     net.update(&pa, 0.0);
@@ -2130,13 +2184,14 @@ pub fn train_game_lambda(
     lambda: f32,
     trace_len: usize,
 ) -> (u64, u32) {
-    let (s, m, _) = train_game_lambda_eps(net, seed, lambda, trace_len, 0.0, 0.0, 0.0);
+    let (s, m, _) = train_game_lambda_eps(net, seed, lambda, trace_len, 0.0, 0.0, 0.0, 0);
     (s, m)
 }
 
 /// TD(lambda) self-play with optional epsilon-exploration; traces are cut at
 /// exploratory moves (Watkins), since earlier afterstates must not inherit
 /// credit through an action the greedy policy did not choose.
+#[allow(clippy::too_many_arguments)]
 pub fn train_game_lambda_eps(
     net: &mut NTupleNet,
     seed: u32,
@@ -2145,6 +2200,7 @@ pub fn train_game_lambda_eps(
     eps_rank: f32,
     eps_rand: f32,
     commit: f64,
+    commit_mode: u8,
 ) -> (u64, u32, u64) {
     fn apply_traces(
         net: &mut NTupleNet,
@@ -2165,7 +2221,7 @@ pub fn train_game_lambda_eps(
     let mut xrng = Mulberry32::new(seed ^ 0x9E37_79B9);
     let mut traces: std::collections::VecDeque<[u8; CELLS]> = Default::default();
     loop {
-        match choose_train(net, &b, &mut xrng, eps_rank, eps_rand, commit) {
+        match choose_train(net, &b, &mut xrng, eps_rank, eps_rand, commit, commit_mode) {
             None => {
                 if let Some(last) = traces.front() {
                     let delta = -(net.value(last) as f32);

@@ -524,6 +524,10 @@ fn cmd_ntuple(args: &[String]) {
             Some((c.parse().ok()?, a.parse().ok()?))
         })
         .unwrap_or((0.0, 1));
+    // 1 = avg-dist coalescing, 2 = top-2 pairing, 3 = off-corner anchor
+    let commit_mode: u8 = arg_val(args, "--commit-mode")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
     // --train-threads N: hogwild lock-free parallel TD (Jaskowski-style).
     // Workers share the tables without locks; racy float updates lose the
     // occasional increment, which TC-TD tolerates. Supported for the plain
@@ -1241,6 +1245,7 @@ fn cmd_ntuple(args: &[String]) {
                             eps_rank,
                             eps_rand,
                             0.0,
+                            0,
                         );
                         win_score.fetch_add(s, Relaxed);
                         win_n.fetch_add(1, Relaxed);
@@ -1308,6 +1313,7 @@ fn cmd_ntuple(args: &[String]) {
                 eps_rank,
                 eps_rand,
                 commit_now,
+                commit_mode,
             )
         } else {
             integer_snake::ntuple::train_game_eps(
@@ -1316,6 +1322,7 @@ fn cmd_ntuple(args: &[String]) {
                 eps_rank,
                 eps_rand,
                 commit_now,
+                commit_mode,
             )
         };
         if net.cfg.stages > 1 {
