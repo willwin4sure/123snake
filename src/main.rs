@@ -1075,6 +1075,95 @@ fn cmd_ntuple(args: &[String]) {
             eprintln!("dumped {eval_games} games to {out_path}");
             return;
         }
+        // --label-q IN --label-out OUT: teacher-label externally generated
+        // decision states (JSONL with "cells":[..]) with the same full-width
+        // depth-2 Q values as --dump-q. Used for DAgger rounds.
+        if let Some(in_path) = arg_val(args, "--label-q") {
+            let out_path = arg_val(args, "--label-out").expect("--label-out FILE");
+            let nt: usize = arg_val(args, "--threads")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(6);
+            let qs: u32 = arg_val(args, "--qsamples")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(48);
+            let text = std::fs::read_to_string(&in_path).expect("read label input");
+            let boards: Vec<[u64; 25]> = text
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|l| {
+                    let s = l.find("\"cells\":[").expect("cells key") + 9;
+                    let e = l[s..].find(']').expect("cells close") + s;
+                    let mut c = [0u64; 25];
+                    for (i, tok) in l[s..e].split(',').enumerate() {
+                        c[i] = tok.trim().parse().expect("cell int");
+                    }
+                    c
+                })
+                .collect();
+            let netr = &net;
+            let chunk = boards.len().div_ceil(nt);
+            let parts: Vec<String> = std::thread::scope(|sp| {
+                let hs: Vec<_> = boards
+                    .chunks(chunk)
+                    .enumerate()
+                    .map(|(t, bs)| {
+                        sp.spawn(move || {
+                            let mut buf = String::new();
+                            let mut rng = Mulberry32::new(0x1AB3 ^ t as u32);
+                            for cells in bs {
+                                let b = Board::from_state(*cells, 0, 1);
+                                let mvs = b.legal_moves_capped(integer_snake::game::MOVE_CAP);
+                                if mvs.is_empty() {
+                                    continue;
+                                }
+                                let scored: Vec<(String, f64)> = mvs
+                                    .iter()
+                                    .map(|mv| {
+                                        let sum = b.cells[mv.path[0] as usize]
+                                            * mv.path.len() as u64;
+                                        let q = integer_snake::ntuple::sampled_move_value(
+                                            netr, &b, mv, sum, qs, &mut rng,
+                                        );
+                                        let pc: Vec<String> = mv
+                                            .path
+                                            .iter()
+                                            .map(|c| c.to_string())
+                                            .collect();
+                                        (format!("[{}]", pc.join(",")), q)
+                                    })
+                                    .collect();
+                                let best = scored
+                                    .iter()
+                                    .enumerate()
+                                    .max_by(|a, c| {
+                                        a.1 .1
+                                            .partial_cmp(&c.1 .1)
+                                            .unwrap_or(std::cmp::Ordering::Equal)
+                                    })
+                                    .map(|(i, _)| i)
+                                    .unwrap();
+                                let cj: Vec<String> =
+                                    cells.iter().map(|c| c.to_string()).collect();
+                                let moves_json: Vec<String> = scored
+                                    .iter()
+                                    .map(|(p, q)| format!("{{\"path\":{p},\"q\":{q:.1}}}"))
+                                    .collect();
+                                buf.push_str(&format!(
+                                    "{{\"cells\":[{}],\"moves\":[{}],\"chosen\":{best},\"score\":0}}\n",
+                                    cj.join(","),
+                                    moves_json.join(","),
+                                ));
+                            }
+                            buf
+                        })
+                    })
+                    .collect();
+                hs.into_iter().map(|h| h.join().unwrap()).collect()
+            });
+            std::fs::write(&out_path, parts.concat()).expect("write labels");
+            eprintln!("labeled {} states to {out_path}", boards.len());
+            return;
+        }
         // eval-only: percentiles over the eval block; --exp topk:samples
         // switches from one-ply greedy to depth-2 net-leaf expectimax
         let mut sc: Vec<u64> = match arg_val(args, "--exp") {

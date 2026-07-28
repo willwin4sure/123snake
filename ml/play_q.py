@@ -25,7 +25,7 @@ def legal_start(cells, i):
     return False
 
 
-def play_game(net, dev, seed):
+def play_game(net, dev, seed, states=None):
     rng = random.Random(seed)
     cells = [rng.randint(1, 3) for _ in range(CELLS)]
     score = 0
@@ -34,6 +34,8 @@ def play_game(net, dev, seed):
         sm = start_mask(cells)
         if not sm.any():
             break
+        if states is not None:
+            states.append(list(cells))
         planes = np.zeros((1, 14, N, N), dtype=np.float32)
         planes[0, :9] = embed_cells(cells)
         with torch.no_grad():
@@ -160,8 +162,18 @@ def main():
     net.load_state_dict(torch.load(ckpt, map_location=dev))
     net.eval()
     mode = sys.argv[3] if len(sys.argv) > 3 else "policy"
-    fn = value_greedy_game if mode == "value" else play_game
-    scores = [fn(net, dev, 12000 + g) for g in range(games)]
+    states_out = sys.argv[8] if len(sys.argv) > 8 else None
+    if states_out:
+        import json
+        states = []
+        scores = [play_game(net, dev, 12000 + g, states) for g in range(games)]
+        with open(states_out, "w") as f:
+            for c in states:
+                f.write(json.dumps({"cells": c}) + "\n")
+        print(f"dumped {len(states)} decision states to {states_out}")
+    else:
+        fn = value_greedy_game if mode == "value" else play_game
+        scores = [fn(net, dev, 12000 + g) for g in range(games)]
     scores.sort()
     n = len(scores)
     print(f"net-{mode} n={n}  mean {sum(scores)/n:.1f}  "
