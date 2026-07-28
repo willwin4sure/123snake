@@ -163,10 +163,11 @@ def main():
     net.eval()
     mode = sys.argv[3] if len(sys.argv) > 3 else "policy"
     states_out = sys.argv[8] if len(sys.argv) > 8 else None
+    seed0 = int(sys.argv[9]) if len(sys.argv) > 9 else 12000
     if states_out:
         import json
         states = []
-        scores = [play_game(net, dev, 12000 + g, states) for g in range(games)]
+        scores = [play_game(net, dev, seed0 + g, states) for g in range(games)]
         with open(states_out, "w") as f:
             for c in states:
                 f.write(json.dumps({"cells": c}) + "\n")
