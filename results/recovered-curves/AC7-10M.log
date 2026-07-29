@@ -1,0 +1,5 @@
+game 100000  train-mean 1413.3  eval-greedy 2166.2
+game 8000000  train-mean 2396.5  eval-greedy 3633.0
+game 8900000  train-mean 2402.7  eval-greedy 3693.4
+game 9000000  train-mean 2394.8  eval-greedy 3698.4
+game 9100000  train-mean 2401.9  eval-greedy 3700.7
