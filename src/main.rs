@@ -1009,7 +1009,23 @@ fn cmd_ntuple(args: &[String]) {
                 .unwrap_or(48);
             let netr = &net;
             let chunk = eval_games.div_ceil(nt);
+            let done = std::sync::atomic::AtomicU64::new(0);
+            let doner = &done;
+            let t0 = std::time::Instant::now();
             let parts: Vec<String> = std::thread::scope(|sp| {
+                sp.spawn(move || loop {
+                    std::thread::sleep(std::time::Duration::from_secs(30));
+                    let d = doner.load(std::sync::atomic::Ordering::Relaxed);
+                    if d >= eval_games as u64 {
+                        break;
+                    }
+                    let el = t0.elapsed().as_secs_f64();
+                    let eta = el / d.max(1) as f64 * (eval_games as u64 - d) as f64;
+                    eprintln!(
+                        "dump progress: {d}/{eval_games} games  {:.0}s elapsed  eta {:.0}s",
+                        el, eta
+                    );
+                });
                 let hs: Vec<_> = (0..nt)
                     .map(|t| {
                         sp.spawn(move || {
@@ -1064,6 +1080,7 @@ fn cmd_ntuple(args: &[String]) {
                                     ));
                                     b.apply(&mvs[best]);
                                 }
+                                doner.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             }
                             buf
                         })
@@ -1102,7 +1119,24 @@ fn cmd_ntuple(args: &[String]) {
                 .collect();
             let netr = &net;
             let chunk = boards.len().div_ceil(nt);
+            let total = boards.len() as u64;
+            let done = std::sync::atomic::AtomicU64::new(0);
+            let doner = &done;
+            let t0 = std::time::Instant::now();
             let parts: Vec<String> = std::thread::scope(|sp| {
+                sp.spawn(move || loop {
+                    std::thread::sleep(std::time::Duration::from_secs(30));
+                    let d = doner.load(std::sync::atomic::Ordering::Relaxed);
+                    if d >= total {
+                        break;
+                    }
+                    let el = t0.elapsed().as_secs_f64();
+                    let eta = el / d.max(1) as f64 * (total - d) as f64;
+                    eprintln!(
+                        "label progress: {d}/{total} states  {:.0}s elapsed  eta {:.0}s",
+                        el, eta
+                    );
+                });
                 let hs: Vec<_> = boards
                     .chunks(chunk)
                     .enumerate()
@@ -1111,6 +1145,7 @@ fn cmd_ntuple(args: &[String]) {
                             let mut buf = String::new();
                             let mut rng = Mulberry32::new(0x1AB3 ^ t as u32);
                             for cells in bs {
+                                doner.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                 let b = Board::from_state(*cells, 0, 1);
                                 let mvs = b.legal_moves_capped(integer_snake::game::MOVE_CAP);
                                 if mvs.is_empty() {
