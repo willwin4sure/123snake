@@ -89,7 +89,7 @@ def play_game(net, dev, seed, states=None):
         moves += 1
         if moves > 3000:
             break
-    return score
+    return score, moves
 
 
 def value_greedy_game(net, dev, seed, k=5):
@@ -147,7 +147,7 @@ def value_greedy_game(net, dev, seed, k=5):
         moves += 1
         if moves > 3000:
             break
-    return score
+    return score, moves
 
 
 def main():
@@ -166,15 +166,35 @@ def main():
     seed0 = int(sys.argv[9]) if len(sys.argv) > 9 else 12000
     if states_out:
         import json
+        import os
+        import time
+        lf = (open(os.environ["PROG_LOG"], "a", buffering=1)
+              if os.environ.get("PROG_LOG") else None)
+        t0 = time.time()
         states = []
-        scores = [play_game(net, dev, seed0 + g, states) for g in range(games)]
+        scores = []
+        for g in range(games):
+            sc, mv = play_game(net, dev, seed0 + g, states)
+            scores.append(sc)
+            if lf:
+                lf.write(f"PROG {g + 1} {sc} {mv} {time.time() - t0:.1f}\n")
         with open(states_out, "w") as f:
             for c in states:
                 f.write(json.dumps({"cells": c}) + "\n")
         print(f"dumped {len(states)} decision states to {states_out}")
     else:
         fn = value_greedy_game if mode == "value" else play_game
-        scores = [fn(net, dev, 12000 + g) for g in range(games)]
+        import os
+        import time
+        lf = (open(os.environ["PROG_LOG"], "a", buffering=1)
+              if os.environ.get("PROG_LOG") else None)
+        t0 = time.time()
+        scores = []
+        for g in range(games):
+            sc, mv = fn(net, dev, 12000 + g)
+            scores.append(sc)
+            if lf:
+                lf.write(f"PROG {g + 1} {sc} {mv} {time.time() - t0:.1f}\n")
     scores.sort()
     n = len(scores)
     print(f"net-{mode} n={n}  mean {sum(scores)/n:.1f}  "
