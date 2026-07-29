@@ -1108,7 +1108,8 @@ fn cmd_ntuple(args: &[String]) {
                 .lines()
                 .filter(|l| !l.trim().is_empty())
                 .map(|l| {
-                    let s = l.find("\"cells\":[").expect("cells key") + 9;
+                    let k = l.find("\"cells\"").expect("cells key");
+                    let s = k + l[k..].find('[').expect("cells open") + 1;
                     let e = l[s..].find(']').expect("cells close") + s;
                     let mut c = [0u64; 25];
                     for (i, tok) in l[s..e].split(',').enumerate() {
