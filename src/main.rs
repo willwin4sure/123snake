@@ -636,6 +636,9 @@ fn cmd_ntuple(args: &[String]) {
         .map(|v| v.split(',').map(str::to_string).collect())
         .unwrap_or_default();
     let start_min = args.iter().any(|a| a == "--start-min");
+    let carousel: f32 = arg_val(args, "--carousel")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.0);
     let trace_len: usize = arg_val(args, "--trace")
         .and_then(|v| v.parse().ok())
         .unwrap_or(16);
@@ -1333,13 +1336,16 @@ fn cmd_ntuple(args: &[String]) {
     }
     if train_threads > 1 {
         assert!(
-            lambda == 0.0
-                && grow.is_empty()
+            grow.is_empty()
                 && !net.promote
                 && net.cfg.stages == 1
                 && net.bonus == 0.0
                 && commit_c == 0.0,
-            "--train-threads supports the plain eps-greedy single-stage trainer"
+            "--train-threads supports eps-greedy (plain, lambda, carousel) single-stage trainers"
+        );
+        assert!(
+            lambda == 0.0 || carousel == 0.0,
+            "--lambda and --carousel are separate arms"
         );
         use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
         let t0 = std::time::Instant::now();
@@ -1359,19 +1365,44 @@ fn cmd_ntuple(args: &[String]) {
                     // hogwild: intentional aliasing; races on f32 cells are
                     // benign lost updates
                     let netp = unsafe { &mut *racy.0 };
+                    let mut cbuf: Vec<[u64; integer_snake::game::CELLS]> = Vec::new();
                     loop {
                         let g = counter.fetch_add(1, Relaxed);
                         if g >= games as u64 {
                             break;
                         }
-                        let (s, _, _) = integer_snake::ntuple::train_game_eps(
-                            netp,
-                            seed0.wrapping_add(g as u32),
-                            eps_rank,
-                            eps_rand,
-                            0.0,
-                            0,
-                        );
+                        let (s, _, _) = if lambda > 0.0 {
+                            integer_snake::ntuple::train_game_lambda_eps(
+                                netp,
+                                seed0.wrapping_add(g as u32),
+                                lambda,
+                                trace_len,
+                                eps_rank,
+                                eps_rand,
+                                0.0,
+                                0,
+                            )
+                        } else if carousel > 0.0 {
+                            integer_snake::ntuple::train_game_eps_carousel(
+                                netp,
+                                seed0.wrapping_add(g as u32),
+                                eps_rank,
+                                eps_rand,
+                                &mut cbuf,
+                                2048,
+                                carousel,
+                                &[192, 768],
+                            )
+                        } else {
+                            integer_snake::ntuple::train_game_eps(
+                                netp,
+                                seed0.wrapping_add(g as u32),
+                                eps_rank,
+                                eps_rand,
+                                0.0,
+                                0,
+                            )
+                        };
                         win_score.fetch_add(s, Relaxed);
                         win_n.fetch_add(1, Relaxed);
                         if eval_every > 0 && (g + 1).is_multiple_of(eval_every as u64) {

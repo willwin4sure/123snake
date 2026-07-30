@@ -2245,6 +2245,65 @@ pub fn train_game_lambda_eps(
     }
 }
 
+/// Carousel-shaped self-play (Jaskowski-style restart shaping): snapshot
+/// the board when its max tile first crosses each threshold; with
+/// probability `restart_p` a game starts from a random snapshot instead of
+/// a fresh board, oversampling under-trained mid/late-game states. The
+/// buffer is caller-owned (worker-local under hogwild).
+#[allow(clippy::too_many_arguments)]
+pub fn train_game_eps_carousel(
+    net: &mut NTupleNet,
+    seed: u32,
+    eps_rank: f32,
+    eps_rand: f32,
+    buf: &mut Vec<[u64; CELLS]>,
+    cap: usize,
+    restart_p: f32,
+    thresholds: &[u64],
+) -> (u64, u32, u64) {
+    let mut xrng = Mulberry32::new(seed ^ 0x9E37_79B9);
+    let restart = !buf.is_empty() && ((xrng.next_f64() as f32) < restart_p);
+    let mut b = if restart {
+        let i = xrng.below(buf.len());
+        Board::from_state(buf[i], 0, seed.wrapping_mul(0x85EB_CA6B))
+    } else {
+        Board::new_game(seed)
+    };
+    let mut crossed = vec![false; thresholds.len()];
+    let mut prev: Option<[u8; CELLS]> = None;
+    loop {
+        let maxt = b.max_tile();
+        for (ti, &th) in thresholds.iter().enumerate() {
+            if !crossed[ti] && maxt >= th {
+                crossed[ti] = true;
+                if !restart {
+                    if buf.len() < cap {
+                        buf.push(b.cells);
+                    } else {
+                        let i = xrng.below(cap);
+                        buf[i] = b.cells;
+                    }
+                }
+            }
+        }
+        match choose_train(net, &b, &mut xrng, eps_rank, eps_rand, 0.0, 0) {
+            None => {
+                if let Some(pa) = prev {
+                    net.update(&pa, 0.0);
+                }
+                return (b.score, b.moves_made, b.max_tile());
+            }
+            Some((mv, r, after, _)) => {
+                if let Some(pa) = prev {
+                    net.update(&pa, r + net.value(&after));
+                }
+                prev = Some(after);
+                b.apply(&mv);
+            }
+        }
+    }
+}
+
 /// Greedy-net policy for the eval harness.
 pub struct NTuplePolicy {
     pub net: NTupleNet,
