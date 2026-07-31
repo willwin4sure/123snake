@@ -24,5 +24,6 @@ chance-node TD targets (equal-time comparison), delayed/batched TC updates.
   run42, t321, fish) — one shared translation-invariant table alongside
   the positional orbit tables (G_SHSTACK group, excluded from folding).
   Factors value into dense global shape effect + sparse positional
-  residual. 72 tables, 1032 images, 1.30B params (~15.6GB), ~67%
-  costlier eval (~17h for 10M at 8T).
+  residual. Includes tinypos: positional per-orbit tables for the tiny
+  families stacked on their shared ones. 97 tables, 1232 images, 1.30B
+  params (~15.6GB), 2x eval cost (~21h for 10M at 8T).

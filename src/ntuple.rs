@@ -297,6 +297,10 @@ pub const EX_FISH: u32 = 4194304;
 /// t321, fish) ALSO add one shared translation-invariant table, factoring
 /// value into a dense global shape effect + sparse positional residual.
 pub const EX_SHSTACK: u32 = 8388608;
+/// Positional tiny tuples: one table per orbit rep for each tiny family
+/// (pair2/line3/smallL3/line4), stacked alongside the shared family
+/// tables when EX_TINY is also set.
+pub const EX_TINYPOS: u32 = 16777216;
 
 /// Global feature kinds, in table order.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -623,7 +627,9 @@ impl NTupleNet {
         // tiny redundant tuples: adjacent pairs, 3-in-line, bent triominoes,
         // 4-in-line — ONE shared translation-invariant table per family
         // (orbit reps computed exhaustively; coverage 40/30/64/20)
-        if cfg.extra & EX_TINY != 0 {
+        if cfg.extra & (EX_TINY | EX_TINYPOS) != 0 {
+            let tsh = cfg.extra & EX_TINY != 0;
+            let tpos = cfg.extra & EX_TINYPOS != 0;
             let pair2: [[(usize, usize); 2]; 6] = [
                 [(0, 0), (0, 1)],
                 [(0, 1), (0, 2)],
@@ -632,10 +638,19 @@ impl NTupleNet {
                 [(1, 1), (1, 2)],
                 [(1, 2), (2, 2)],
             ];
-            tables.push(Lut::new(m.pow(2)));
-            arity.push(2);
-            for cells in &pair2 {
-                add_base(&mut images, cells, tables.len() - 1, G_TINY);
+            if tsh {
+                tables.push(Lut::new(m.pow(2)));
+                arity.push(2);
+                for cells in &pair2 {
+                    add_base(&mut images, cells, tables.len() - 1, G_TINY);
+                }
+            }
+            if tpos {
+                for cells in &pair2 {
+                    tables.push(Lut::new(m.pow(2)));
+                    arity.push(2);
+                    add_base(&mut images, cells, tables.len() - 1, G_TINY);
+                }
             }
             let line3: [[(usize, usize); 3]; 6] = [
                 [(0, 0), (0, 1), (0, 2)],
@@ -645,10 +660,19 @@ impl NTupleNet {
                 [(1, 1), (1, 2), (1, 3)],
                 [(1, 2), (2, 2), (3, 2)],
             ];
-            tables.push(Lut::new(m.pow(3)));
-            arity.push(3);
-            for cells in &line3 {
-                add_base(&mut images, cells, tables.len() - 1, G_TINY);
+            if tsh {
+                tables.push(Lut::new(m.pow(3)));
+                arity.push(3);
+                for cells in &line3 {
+                    add_base(&mut images, cells, tables.len() - 1, G_TINY);
+                }
+            }
+            if tpos {
+                for cells in &line3 {
+                    tables.push(Lut::new(m.pow(3)));
+                    arity.push(3);
+                    add_base(&mut images, cells, tables.len() - 1, G_TINY);
+                }
             }
             let sl3: [[(usize, usize); 3]; 10] = [
                 [(0, 0), (0, 1), (1, 0)],
@@ -662,20 +686,38 @@ impl NTupleNet {
                 [(1, 1), (1, 2), (2, 2)],
                 [(1, 2), (2, 1), (2, 2)],
             ];
-            tables.push(Lut::new(m.pow(3)));
-            arity.push(3);
-            for cells in &sl3 {
-                add_base(&mut images, cells, tables.len() - 1, G_TINY);
+            if tsh {
+                tables.push(Lut::new(m.pow(3)));
+                arity.push(3);
+                for cells in &sl3 {
+                    add_base(&mut images, cells, tables.len() - 1, G_TINY);
+                }
+            }
+            if tpos {
+                for cells in &sl3 {
+                    tables.push(Lut::new(m.pow(3)));
+                    arity.push(3);
+                    add_base(&mut images, cells, tables.len() - 1, G_TINY);
+                }
             }
             let line4: [[(usize, usize); 4]; 3] = [
                 [(0, 0), (0, 1), (0, 2), (0, 3)],
                 [(0, 1), (1, 1), (2, 1), (3, 1)],
                 [(0, 2), (1, 2), (2, 2), (3, 2)],
             ];
-            tables.push(Lut::new(m.pow(4)));
-            arity.push(4);
-            for cells in &line4 {
-                add_base(&mut images, cells, tables.len() - 1, G_TINY);
+            if tsh {
+                tables.push(Lut::new(m.pow(4)));
+                arity.push(4);
+                for cells in &line4 {
+                    add_base(&mut images, cells, tables.len() - 1, G_TINY);
+                }
+            }
+            if tpos {
+                for cells in &line4 {
+                    tables.push(Lut::new(m.pow(4)));
+                    arity.push(4);
+                    add_base(&mut images, cells, tables.len() - 1, G_TINY);
+                }
             }
         }
         // 4+2 runs: a 4-in-line with an adjacent 2-in-line (2x2 square with
