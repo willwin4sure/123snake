@@ -490,6 +490,14 @@ impl NTupleNet {
             arity.push(5);
             add_base(&mut images, &cells, tables.len() - 1, G_ROWS);
         }
+        if cfg.extra & EX_SHSTACK != 0 {
+            tables.push(Lut::new(len5));
+            arity.push(5);
+            for r in 0..3 {
+                let cells: Vec<_> = (0..N).map(|c| (r, c)).collect();
+                add_base(&mut images, &cells, tables.len() - 1, G_SHSTACK);
+            }
+        }
         // 2x2 squares, anchor orbit reps
         for &(r, c) in &[(0, 0), (0, 1), (1, 1)] {
             let cells = [(r, c), (r, c + 1), (r + 1, c), (r + 1, c + 1)];
@@ -497,12 +505,28 @@ impl NTupleNet {
             arity.push(4);
             add_base(&mut images, &cells, tables.len() - 1, G_SQ2);
         }
+        if cfg.extra & EX_SHSTACK != 0 {
+            tables.push(Lut::new(len4));
+            arity.push(4);
+            for &(r, c) in &[(0, 0), (0, 1), (1, 1)] {
+                let cells = [(r, c), (r, c + 1), (r + 1, c), (r + 1, c + 1)];
+                add_base(&mut images, &cells, tables.len() - 1, G_SHSTACK);
+            }
+        }
         // plus shapes, center orbit reps
         for &(r, c) in &[(1, 1), (1, 2), (2, 2)] {
             let cells = [(r, c), (r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)];
             tables.push(Lut::new(len5));
             arity.push(5);
             add_base(&mut images, &cells, tables.len() - 1, G_PLUS);
+        }
+        if cfg.extra & EX_SHSTACK != 0 {
+            tables.push(Lut::new(len5));
+            arity.push(5);
+            for &(r, c) in &[(1, 1), (1, 2), (2, 2)] {
+                let cells = [(r, c), (r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)];
+                add_base(&mut images, &cells, tables.len() - 1, G_SHSTACK);
+            }
         }
         // wraparound diagonals D_k = {(r, (r+k) mod 5)}: orbit reps k=0,1,2
         // (reflections/transposes cover the other offsets and the whole
@@ -532,6 +556,13 @@ impl NTupleNet {
                 arity.push(5);
                 add_base(&mut images, cells, tables.len() - 1, G_STAIR);
             }
+            if cfg.extra & EX_SHSTACK != 0 {
+                tables.push(Lut::new(len5));
+                arity.push(5);
+                for cells in &reps {
+                    add_base(&mut images, cells, tables.len() - 1, G_SHSTACK);
+                }
+            }
         }
         // big Ls: 5-cell corner hooks, 6 orbit reps cover all 36 placements
         if cfg.extra & EX_BIGL != 0 {
@@ -547,6 +578,13 @@ impl NTupleNet {
                 tables.push(Lut::new(len5));
                 arity.push(5);
                 add_base(&mut images, cells, tables.len() - 1, G_BIGL);
+            }
+            if cfg.extra & EX_SHSTACK != 0 {
+                tables.push(Lut::new(len5));
+                arity.push(5);
+                for cells in &reps {
+                    add_base(&mut images, cells, tables.len() - 1, G_SHSTACK);
+                }
             }
         }
         // X shapes: diagonal cross, 3 orbit reps cover all 9 placements
@@ -573,6 +611,13 @@ impl NTupleNet {
                 tables.push(Lut::new(m.pow(6)));
                 arity.push(6);
                 add_base(&mut images, cells, tables.len() - 1, G_STAIR6);
+            }
+            if cfg.extra & EX_SHSTACK != 0 {
+                tables.push(Lut::new(m.pow(6)));
+                arity.push(6);
+                for cells in &reps {
+                    add_base(&mut images, cells, tables.len() - 1, G_SHSTACK);
+                }
             }
         }
         // tiny redundant tuples: adjacent pairs, 3-in-line, bent triominoes,

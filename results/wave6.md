@@ -19,9 +19,10 @@ chance-node TD targets (equal-time comparison), delayed/batched TC updates.
   +75 @200k) fully converged to baseline by ~2M; eval 3559 @7.1M vs
   baseline ~3560 at same stage. Traces accelerate early learning but
   buy nothing asymptotically at 10M scale. No final artifact saved.
-- AC7-shstack (queued behind carousel): shared+positional stacking — for
-  each positional family (2x3, run42pos, t321, fish) add one shared
-  translation-invariant table alongside the orbit tables (new G_SHSTACK
-  group, excluded from folding). Factors value into dense global shape
-  effect + sparse positional residual. 66 tables, 840 images, 1.26B
-  params (~15GB), ~36% costlier eval.
+- AC7-shstack (queued behind carousel): shared+positional stacking for
+  EVERY shape family (rows, 2x2, plus, staircase, bigL, stair6, 2x3,
+  run42, t321, fish) — one shared translation-invariant table alongside
+  the positional orbit tables (G_SHSTACK group, excluded from folding).
+  Factors value into dense global shape effect + sparse positional
+  residual. 72 tables, 1032 images, 1.30B params (~15.6GB), ~67%
+  costlier eval (~17h for 10M at 8T).
