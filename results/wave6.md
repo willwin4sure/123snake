@@ -27,3 +27,8 @@ chance-node TD targets (equal-time comparison), delayed/batched TC updates.
   residual. Includes tinypos: positional per-orbit tables for the tiny
   families stacked on their shared ones. 97 tables, 1232 images, 1.30B
   params (~15.6GB), 2x eval cost (~21h for 10M at 8T).
+- AC7-carousel: WIN. @30k mean 3732.6 vs baseline 3601.7 (+131, ~2.6x
+  the run-variance band) and vs original champion 3644 (+88). Lift is
+  broad (p50 +3.7%, p90 +3.8%) with the largest relative gain in the
+  extreme tail (max +6.4%). Table fill 105.3M vs 101.4M. New champion
+  candidate; restart shaping stays in the recipe.
