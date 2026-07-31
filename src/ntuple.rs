@@ -265,6 +265,8 @@ pub const G_TINY: u8 = 9;
 pub const G_RUN42: u8 = 10;
 pub const G_T321: u8 = 11;
 pub const G_FISH: u8 = 12;
+/// stacked shared duplicates (never fold sources or targets)
+pub const G_SHSTACK: u8 = 13;
 pub const N_GROUPS: usize = 13;
 
 /// Extra-feature bitmask (cfg.extra).
@@ -291,6 +293,10 @@ pub const EX_RUN42: u32 = 524288;
 pub const EX_RUN42POS: u32 = 1048576;
 pub const EX_T321: u32 = 2097152;
 pub const EX_FISH: u32 = 4194304;
+/// Shared+positional stacking: for each positional family (2x3, run42pos,
+/// t321, fish) ALSO add one shared translation-invariant table, factoring
+/// value into a dense global shape effect + sparse positional residual.
+pub const EX_SHSTACK: u32 = 8388608;
 
 /// Global feature kinds, in table order.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -674,6 +680,18 @@ impl NTupleNet {
                 }
                 add_base(&mut images, cells, tables.len() - 1, G_RUN42);
             }
+            if pos && cfg.extra & EX_SHSTACK != 0 {
+                tables.push(Lut::new(m.pow(6)));
+                arity.push(6);
+                for cells in &flush {
+                    add_base(&mut images, cells, tables.len() - 1, G_SHSTACK);
+                }
+                tables.push(Lut::new(m.pow(6)));
+                arity.push(6);
+                for cells in &centered {
+                    add_base(&mut images, cells, tables.len() - 1, G_SHSTACK);
+                }
+            }
         }
         // 321 triangles: staircase-with-filled-corner 6-tuples. Contains
         // every 5-cell staircase AND every bigL placement (fold targets).
@@ -692,6 +710,13 @@ impl NTupleNet {
                 arity.push(6);
                 add_base(&mut images, cells, tables.len() - 1, G_T321);
             }
+            if cfg.extra & EX_SHSTACK != 0 {
+                tables.push(Lut::new(m.pow(6)));
+                arity.push(6);
+                for cells in &reps {
+                    add_base(&mut images, cells, tables.len() - 1, G_SHSTACK);
+                }
+            }
         }
         // fish: 2x2 square with two cells hanging around one corner
         // (= plus with a filled diagonal corner; contains every plus AND
@@ -709,6 +734,13 @@ impl NTupleNet {
                 tables.push(Lut::new(m.pow(6)));
                 arity.push(6);
                 add_base(&mut images, cells, tables.len() - 1, G_FISH);
+            }
+            if cfg.extra & EX_SHSTACK != 0 {
+                tables.push(Lut::new(m.pow(6)));
+                arity.push(6);
+                for cells in &reps {
+                    add_base(&mut images, cells, tables.len() - 1, G_SHSTACK);
+                }
             }
         }
         // 2x3 blocks: the 24 placements (both orientations) decompose into 4
@@ -738,6 +770,13 @@ impl NTupleNet {
                     }
                 };
                 add_base(&mut images, cells, table, G_BLK23);
+            }
+            if cfg.pos_2x3 && cfg.extra & EX_SHSTACK != 0 {
+                tables.push(Lut::new(m.pow(6)));
+                arity.push(6);
+                for cells in &reps {
+                    add_base(&mut images, cells, tables.len() - 1, G_SHSTACK);
+                }
             }
         }
         let mut gkinds: Vec<GKind> = Vec::new();

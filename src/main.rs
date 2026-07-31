@@ -612,6 +612,7 @@ fn cmd_ntuple(args: &[String]) {
                             "run42pos" => EX_RUN42POS,
                             "t321" => EX_T321,
                             "fish" => EX_FISH,
+                            "shstack" => EX_SHSTACK,
                             other => panic!("unknown --extra flag {other}"),
                         })
                         .fold(0, |a, b| a | b)
