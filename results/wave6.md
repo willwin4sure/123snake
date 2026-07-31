@@ -13,3 +13,9 @@ Champion reference: AC7-10M @30k = 3644.
 Queued candidates (need decisions/work): 2-stage weight promotion (doubles
 table memory to 26GB), optimistic init replacing eps-greedy, exact
 chance-node TD targets (equal-time comparison), delayed/batched TC updates.
+
+## Verdicts
+- AC7-lam05 (TC lambda=0.5): killed at 7.1M. Early lead (+123 @100k,
+  +75 @200k) fully converged to baseline by ~2M; eval 3559 @7.1M vs
+  baseline ~3560 at same stage. Traces accelerate early learning but
+  buy nothing asymptotically at 10M scale. No final artifact saved.
