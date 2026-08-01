@@ -267,7 +267,7 @@ pub const G_T321: u8 = 11;
 pub const G_FISH: u8 = 12;
 /// stacked shared duplicates (never fold sources or targets)
 pub const G_SHSTACK: u8 = 13;
-pub const N_GROUPS: usize = 13;
+pub const N_GROUPS: usize = 14;
 
 /// Extra-feature bitmask (cfg.extra).
 pub const EX_BIGL: u32 = 1;
