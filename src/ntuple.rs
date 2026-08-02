@@ -269,7 +269,10 @@ pub const G_FISH: u8 = 12;
 pub const G_SHSTACK: u8 = 13;
 pub const G_HOOK6: u8 = 14;
 pub const G_ZIG6: u8 = 15;
-pub const N_GROUPS: usize = 16;
+pub const G_L44: u8 = 16;
+pub const G_STAIR7: u8 = 17;
+pub const G_HASH8: u8 = 18;
+pub const N_GROUPS: usize = 19;
 
 /// Extra-feature bitmask (cfg.extra).
 pub const EX_BIGL: u32 = 1;
@@ -312,6 +315,20 @@ pub const EX_ZIG6: u32 = 67108864;
 /// tiny2 pack: diagonal pairs + T/S/L tetrominoes, one shared
 /// translation-invariant table per family (the tiny-tuple treatment).
 pub const EX_TINY2: u32 = 134217728;
+/// 7-tuples on the chain-preserving 12-symbol alphabet (slim codes
+/// remapped per-digit): corner L44 and stair7.
+pub const EX_L44: u32 = 268435456;
+pub const EX_STAIR7: u32 = 536870912;
+/// Hashed corner 8-tuple: 3x3-minus-far-corner anchored at the corners,
+/// full slim resolution, FNV-1a into 2^26 slots (collisions accepted).
+pub const EX_HASH8: u32 = 1073741824;
+pub const HASH8_LEN: usize = 1 << 26;
+
+/// Slim(18) code -> chain-preserving 12: exact 1,2,3,4 and ladder
+/// 6..48; {96,192} paired; 384+ one giant bucket; pow2/nine/trash
+/// merged off-ladder; pending.
+pub const CH12_OF_SLIM: [u8; 18] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 8, 9, 9, 9, 9, 10, 10, 10, 11];
+pub const CH12_M: usize = 12;
 
 /// Global feature kinds, in table order.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -362,6 +379,10 @@ struct Image {
     cells: Vec<u8>,
     table: usize,
     group: u8,
+    /// index with the chain-12 coarse alphabet (slim digit remap)
+    coarse: bool,
+    /// index by FNV-1a hash of the codes (fixed-size table, collisions ok)
+    hashed: bool,
 }
 
 /// The 8 dihedral transforms of the 5x5 board.
@@ -489,6 +510,8 @@ impl NTupleNet {
                     cells: img,
                     table,
                     group,
+                    coarse: false,
+                    hashed: false,
                 });
             }
         }
@@ -947,6 +970,94 @@ impl NTupleNet {
                 }
             }
         }
+        // 7-tuples on the chain-12 alphabet (slim digit remap): corner L44
+        // (two 4-runs meeting in a corner) and stair7. 16 placements / 3
+        // orbits each; 12^7 entries per orbit table.
+        if cfg.extra & (EX_L44 | EX_STAIR7) != 0 {
+            assert!(
+                cfg.alphabet == Alphabet::Slim,
+                "chain-12 seven-tuples require the slim alphabet"
+            );
+            let add_coarse = |images: &mut Vec<Image>,
+                              tables: &mut Vec<Lut>,
+                              arity: &mut Vec<u8>,
+                              cells: &[(usize, usize)],
+                              group: u8| {
+                tables.push(Lut::new(CH12_M.pow(7)));
+                arity.push(7);
+                let table = tables.len() - 1;
+                for t in 0..8 {
+                    let img: Vec<u8> = cells
+                        .iter()
+                        .map(|&(r, c)| {
+                            let (rr, cc) = dihedral(r, c, t);
+                            idx(rr, cc) as u8
+                        })
+                        .collect();
+                    images.push(Image {
+                        cells: img,
+                        table,
+                        group,
+                        coarse: true,
+                        hashed: false,
+                    });
+                }
+            };
+            if cfg.extra & EX_L44 != 0 {
+                let reps: [[(usize, usize); 7]; 3] = [
+                    [(0, 0), (0, 1), (0, 2), (0, 3), (1, 0), (2, 0), (3, 0)],
+                    [(0, 0), (0, 1), (0, 2), (0, 3), (1, 3), (2, 3), (3, 3)],
+                    [(0, 1), (1, 1), (2, 1), (3, 1), (3, 2), (3, 3), (3, 4)],
+                ];
+                for cells in &reps {
+                    add_coarse(&mut images, &mut tables, &mut arity, cells, G_L44);
+                }
+            }
+            if cfg.extra & EX_STAIR7 != 0 {
+                let reps: [[(usize, usize); 7]; 3] = [
+                    [(0, 0), (0, 1), (1, 1), (1, 2), (2, 2), (2, 3), (3, 3)],
+                    [(0, 1), (0, 2), (1, 2), (1, 3), (2, 3), (2, 4), (3, 4)],
+                    [(0, 1), (1, 1), (1, 2), (2, 2), (2, 3), (3, 3), (3, 4)],
+                ];
+                for cells in &reps {
+                    add_coarse(&mut images, &mut tables, &mut arity, cells, G_STAIR7);
+                }
+            }
+        }
+        // hashed corner 8-tuple: 3x3 block minus its far corner, anchored
+        // at the board corners (dihedral gives all 4), full slim codes
+        // hashed into a fixed 2^26 table
+        if cfg.extra & EX_HASH8 != 0 {
+            tables.push(Lut::new(HASH8_LEN));
+            arity.push(8);
+            let table = tables.len() - 1;
+            let cells8: [(usize, usize); 8] = [
+                (0, 0),
+                (0, 1),
+                (0, 2),
+                (1, 0),
+                (1, 1),
+                (1, 2),
+                (2, 0),
+                (2, 1),
+            ];
+            for t in 0..8 {
+                let img: Vec<u8> = cells8
+                    .iter()
+                    .map(|&(r, c)| {
+                        let (rr, cc) = dihedral(r, c, t);
+                        idx(rr, cc) as u8
+                    })
+                    .collect();
+                images.push(Image {
+                    cells: img,
+                    table,
+                    group: G_HASH8,
+                    coarse: false,
+                    hashed: true,
+                });
+            }
+        }
         // 2x3 blocks: the 24 placements (both orientations) decompose into 4
         // orbits under dihedral-8 (two of size 8, two of size 4); positional
         // per-orbit tables, or one shared translation-invariant table
@@ -1269,8 +1380,22 @@ impl NTupleNet {
 
     fn index(&self, img: &Image, codes: &[u8; CELLS]) -> usize {
         let mut i = 0usize;
-        for &c in &img.cells {
-            i = i * self.m + codes[c as usize] as usize;
+        if img.hashed {
+            let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+            for &c in &img.cells {
+                h ^= codes[c as usize] as u64;
+                h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+            return (h as usize) & (HASH8_LEN - 1);
+        }
+        if img.coarse {
+            for &c in &img.cells {
+                i = i * CH12_M + CH12_OF_SLIM[codes[c as usize] as usize] as usize;
+            }
+        } else {
+            for &c in &img.cells {
+                i = i * self.m + codes[c as usize] as usize;
+            }
         }
         i
     }
