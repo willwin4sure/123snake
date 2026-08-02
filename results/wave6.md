@@ -32,3 +32,7 @@ chance-node TD targets (equal-time comparison), delayed/batched TC updates.
   broad (p50 +3.7%, p90 +3.8%) with the largest relative gain in the
   extreme tail (max +6.4%). Table fill 105.3M vs 101.4M. New champion
   candidate; restart shaping stays in the recipe.
+- AC8C-hex6 (queued behind shstack): CAROUSEL base + hook6 (L-hexomino
+  4+3 corner turn, 6 orbits, contains bigL -> future fold target) +
+  zig6 (offset 3-runs, 2 orbits). 69 tables, 680 images, 1.36B params
+  (~16.4GB). The expressivity arm on the new champion recipe.
