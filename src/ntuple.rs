@@ -2671,6 +2671,23 @@ pub fn train_game_lambda_eps(
     }
 }
 
+/// Exploration options for the shaped trainer: carousel restarts,
+/// temporally-extended random bursts (eps_z-greedy style), and per-game
+/// randomized heuristic steering (selection-only commit bonuses).
+#[derive(Clone, Copy, Default)]
+pub struct ExploreOpts {
+    /// probability a game restarts from a carousel snapshot
+    pub carousel_p: f32,
+    /// per-decision probability of starting a random burst
+    pub burst_p: f32,
+    /// burst length is uniform in 2..=burst_kmax
+    pub burst_kmax: u32,
+    /// probability a game gets a random steering heuristic
+    pub steer_p: f32,
+    /// steering coefficient magnitude: c ~ U(-steer_cmax, steer_cmax)
+    pub steer_cmax: f64,
+}
+
 /// Carousel-shaped self-play (Jaskowski-style restart shaping): snapshot
 /// the board when its max tile first crosses each threshold; with
 /// probability `restart_p` a game starts from a random snapshot instead of
@@ -2684,17 +2701,27 @@ pub fn train_game_eps_carousel(
     eps_rand: f32,
     buf: &mut Vec<[u64; CELLS]>,
     cap: usize,
-    restart_p: f32,
+    opts: ExploreOpts,
     thresholds: &[u64],
 ) -> (u64, u32, u64) {
     let mut xrng = Mulberry32::new(seed ^ 0x9E37_79B9);
-    let restart = !buf.is_empty() && ((xrng.next_f64() as f32) < restart_p);
+    let restart = !buf.is_empty() && ((xrng.next_f64() as f32) < opts.carousel_p);
     let mut b = if restart {
         let i = xrng.below(buf.len());
         Board::from_state(buf[i], 0, seed.wrapping_mul(0x85EB_CA6B))
     } else {
         Board::new_game(seed)
     };
+    // per-game randomized steering: selection-only bonus with random
+    // heuristic mode and random signed coefficient
+    let (commit, commit_mode) = if opts.steer_p > 0.0 && (xrng.next_f64() as f32) < opts.steer_p {
+        let mode = 1 + xrng.below(3) as u8;
+        let c = (xrng.next_f64() * 2.0 - 1.0) * opts.steer_cmax;
+        (c, mode)
+    } else {
+        (0.0, 0)
+    };
+    let mut burst = 0u32;
     let mut crossed = vec![false; thresholds.len()];
     let mut prev: Option<[u8; CELLS]> = None;
     loop {
@@ -2712,7 +2739,19 @@ pub fn train_game_eps_carousel(
                 }
             }
         }
-        match choose_train(net, &b, &mut xrng, eps_rank, eps_rand, 0.0, 0) {
+        // temporally-extended exploration: bursts of consecutive
+        // uniform-random moves relocate the trajectory instead of the
+        // single instantly-corrected random step of plain eps-greedy
+        let (er_rank, er_rand) = if burst > 0 {
+            burst -= 1;
+            (0.0, 1.0)
+        } else if opts.burst_p > 0.0 && (xrng.next_f64() as f32) < opts.burst_p {
+            burst = 1 + xrng.below(opts.burst_kmax.max(2) as usize - 1) as u32;
+            (0.0, 1.0)
+        } else {
+            (eps_rank, eps_rand)
+        };
+        match choose_train(net, &b, &mut xrng, er_rank, er_rand, commit, commit_mode) {
             None => {
                 if let Some(pa) = prev {
                     net.update(&pa, 0.0);

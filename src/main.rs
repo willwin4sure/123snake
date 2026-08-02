@@ -647,6 +647,19 @@ fn cmd_ntuple(args: &[String]) {
     let carousel: f32 = arg_val(args, "--carousel")
         .and_then(|v| v.parse().ok())
         .unwrap_or(0.0);
+    let (burst_p, burst_kmax): (f32, u32) = arg_val(args, "--burst")
+        .map(|v| {
+            let (p, k) = v.split_once(':').expect("--burst p:kmax");
+            (p.parse().expect("burst p"), k.parse().expect("burst kmax"))
+        })
+        .unwrap_or((0.0, 0));
+    let (steer_p, steer_cmax): (f32, f64) = arg_val(args, "--steer")
+        .map(|v| {
+            let (p, c) = v.split_once(':').expect("--steer p:cmax");
+            (p.parse().expect("steer p"), c.parse().expect("steer cmax"))
+        })
+        .unwrap_or((0.0, 0.0));
+    let shaped = carousel > 0.0 || burst_p > 0.0 || steer_p > 0.0;
     let trace_len: usize = arg_val(args, "--trace")
         .and_then(|v| v.parse().ok())
         .unwrap_or(16);
@@ -1357,8 +1370,8 @@ fn cmd_ntuple(args: &[String]) {
             "--train-threads supports eps-greedy (plain, lambda, carousel) single-stage trainers"
         );
         assert!(
-            lambda == 0.0 || carousel == 0.0,
-            "--lambda and --carousel are separate arms"
+            lambda == 0.0 || !shaped,
+            "--lambda does not combine with the shaped trainer"
         );
         use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
         let t0 = std::time::Instant::now();
@@ -1395,7 +1408,7 @@ fn cmd_ntuple(args: &[String]) {
                                 0.0,
                                 0,
                             )
-                        } else if carousel > 0.0 {
+                        } else if shaped {
                             integer_snake::ntuple::train_game_eps_carousel(
                                 netp,
                                 seed0.wrapping_add(g as u32),
@@ -1403,7 +1416,13 @@ fn cmd_ntuple(args: &[String]) {
                                 eps_rand,
                                 &mut cbuf,
                                 2048,
-                                carousel,
+                                integer_snake::ntuple::ExploreOpts {
+                                    carousel_p: carousel,
+                                    burst_p,
+                                    burst_kmax,
+                                    steer_p,
+                                    steer_cmax,
+                                },
                                 &[192, 768],
                             )
                         } else {
