@@ -616,6 +616,7 @@ fn cmd_ntuple(args: &[String]) {
                             "tinypos" => EX_TINYPOS,
                             "hook6" => EX_HOOK6,
                             "zig6" => EX_ZIG6,
+                            "tiny2" => EX_TINY2,
                             other => panic!("unknown --extra flag {other}"),
                         })
                         .fold(0, |a, b| a | b)

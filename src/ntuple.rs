@@ -309,6 +309,9 @@ pub const EX_HOOK6: u32 = 33554432;
 /// Long zigzag (two 3-runs offset by one): wide-radius turns. 16
 /// placements, 2 orbits.
 pub const EX_ZIG6: u32 = 67108864;
+/// tiny2 pack: diagonal pairs + T/S/L tetrominoes, one shared
+/// translation-invariant table per family (the tiny-tuple treatment).
+pub const EX_TINY2: u32 = 134217728;
 
 /// Global feature kinds, in table order.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -726,6 +729,69 @@ impl NTupleNet {
                     arity.push(4);
                     add_base(&mut images, cells, tables.len() - 1, G_TINY);
                 }
+            }
+        }
+        // tiny2: diagonal pairs + T/S/L tetrominoes, shared per family
+        if cfg.extra & EX_TINY2 != 0 {
+            let diag2: [[(usize, usize); 2]; 6] = [
+                [(0, 0), (1, 1)],
+                [(0, 1), (1, 0)],
+                [(0, 1), (1, 2)],
+                [(0, 2), (1, 1)],
+                [(1, 1), (2, 2)],
+                [(1, 2), (2, 1)],
+            ];
+            tables.push(Lut::new(m.pow(2)));
+            arity.push(2);
+            for cells in &diag2 {
+                add_base(&mut images, cells, tables.len() - 1, G_TINY);
+            }
+            let t4: [[(usize, usize); 4]; 8] = [
+                [(0, 0), (0, 1), (0, 2), (1, 1)],
+                [(0, 1), (0, 2), (0, 3), (1, 2)],
+                [(0, 1), (1, 0), (1, 1), (1, 2)],
+                [(0, 1), (1, 1), (1, 2), (2, 1)],
+                [(0, 2), (1, 1), (1, 2), (1, 3)],
+                [(0, 2), (1, 1), (1, 2), (2, 2)],
+                [(1, 1), (1, 2), (1, 3), (2, 2)],
+                [(1, 2), (2, 1), (2, 2), (2, 3)],
+            ];
+            tables.push(Lut::new(m.pow(4)));
+            arity.push(4);
+            for cells in &t4 {
+                add_base(&mut images, cells, tables.len() - 1, G_TINY);
+            }
+            let s4: [[(usize, usize); 4]; 6] = [
+                [(0, 0), (0, 1), (1, 1), (1, 2)],
+                [(0, 1), (0, 2), (1, 0), (1, 1)],
+                [(0, 1), (0, 2), (1, 2), (1, 3)],
+                [(0, 1), (1, 1), (1, 2), (2, 2)],
+                [(0, 2), (1, 1), (1, 2), (2, 1)],
+                [(1, 1), (1, 2), (2, 2), (2, 3)],
+            ];
+            tables.push(Lut::new(m.pow(4)));
+            arity.push(4);
+            for cells in &s4 {
+                add_base(&mut images, cells, tables.len() - 1, G_TINY);
+            }
+            let l4: [[(usize, usize); 4]; 12] = [
+                [(0, 0), (0, 1), (0, 2), (1, 0)],
+                [(0, 0), (0, 1), (0, 2), (1, 2)],
+                [(0, 0), (0, 1), (1, 1), (2, 1)],
+                [(0, 1), (0, 2), (0, 3), (1, 1)],
+                [(0, 1), (0, 2), (1, 1), (2, 1)],
+                [(0, 1), (0, 2), (1, 2), (2, 2)],
+                [(0, 1), (1, 1), (1, 2), (1, 3)],
+                [(0, 1), (1, 1), (2, 0), (2, 1)],
+                [(0, 1), (1, 1), (2, 1), (2, 2)],
+                [(0, 2), (1, 2), (2, 1), (2, 2)],
+                [(1, 1), (1, 2), (1, 3), (2, 1)],
+                [(1, 1), (1, 2), (2, 2), (3, 2)],
+            ];
+            tables.push(Lut::new(m.pow(4)));
+            arity.push(4);
+            for cells in &l4 {
+                add_base(&mut images, cells, tables.len() - 1, G_TINY);
             }
         }
         // 4+2 runs: a 4-in-line with an adjacent 2-in-line (2x2 square with
@@ -2831,7 +2897,7 @@ mod tests {
         let mut cfg = NetConfig::base();
         cfg.staircase = true;
         cfg.diagonals = true;
-        cfg.extra = EX_TINY;
+        cfg.extra = EX_TINY | EX_TINY2;
         let net = NTupleNet::new(1.0, cfg);
         let stamped: BTreeSet<BTreeSet<usize>> = net
             .images
@@ -2847,6 +2913,10 @@ mod tests {
             ("line3", vec![(0, 0), (0, 1), (0, 2)]),
             ("smallL3", vec![(0, 0), (0, 1), (1, 0)]),
             ("line4", vec![(0, 0), (0, 1), (0, 2), (0, 3)]),
+            ("diag2", vec![(0, 0), (1, 1)]),
+            ("t4", vec![(0, 0), (0, 1), (0, 2), (1, 1)]),
+            ("s4", vec![(0, 1), (0, 2), (1, 0), (1, 1)]),
+            ("l4", vec![(0, 0), (1, 0), (2, 0), (2, 1)]),
         ] {
             for p in placements(&shape) {
                 assert!(stamped.contains(&p), "{name} placement missing: {p:?}");
@@ -2856,12 +2926,12 @@ mod tests {
         let mut cfg2 = NetConfig::base();
         cfg2.alphabet = Alphabet::Coarse;
         cfg2.with_2x3 = false;
-        cfg2.extra = EX_RUN42 | EX_T321 | EX_FISH;
+        cfg2.extra = EX_RUN42 | EX_T321 | EX_FISH | EX_HOOK6 | EX_ZIG6;
         let net2 = NTupleNet::new(1.0, cfg2);
         let stamped2: BTreeSet<BTreeSet<usize>> = net2
             .images
             .iter()
-            .filter(|img| img.group == G_RUN42 || img.group == G_T321 || img.group == G_FISH)
+            .filter(|img| matches!(img.group, G_RUN42 | G_T321 | G_FISH | G_HOOK6 | G_ZIG6))
             .map(|img| img.cells.iter().map(|&c| c as usize).collect())
             .collect();
         for (name, shape) in [
@@ -2875,6 +2945,11 @@ mod tests {
             ),
             ("t321", vec![(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (2, 0)]),
             ("fish", vec![(0, 1), (0, 2), (1, 0), (1, 1), (1, 2), (2, 1)]),
+            (
+                "hook6",
+                vec![(0, 0), (0, 1), (0, 2), (0, 3), (1, 3), (2, 3)],
+            ),
+            ("zig6", vec![(0, 0), (0, 1), (0, 2), (1, 2), (1, 3), (1, 4)]),
         ] {
             for p in placements(&shape) {
                 assert!(stamped2.contains(&p), "{name} placement missing: {p:?}");
