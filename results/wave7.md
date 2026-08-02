@@ -28,3 +28,14 @@ run42pos and all other tuple families are positional.
 
 Verdict per arm: final-1M mean eval vs W7-cont; 30k bench for winners.
 Dash: port 8279 (fill %, delta vs matched control).
+
+## Phase 3b — exploration arms (both phases, per review)
+| arm | mode | phase |
+|---|---|---|
+| W7-burst | --burst 0.01:5 (eps_z bursts of 2-5 random moves) | seeded +2.5M |
+| W7-steer | --steer 0.25:40 (25% of games: random commit heuristic 1/2/3, c~U(-40,40), selection-only) | seeded +2.5M |
+| W7-burst-f | same burst | fresh 2.5M (control = race winner curve) |
+| W7-steer-f | same steer | fresh 2.5M (control = race winner curve) |
+Hypotheses: fresh tests escape from premature strategy lock-in;
+seeded tests un-sticking an already-strong policy where single-step
+eps-greedy is instantly corrected.
