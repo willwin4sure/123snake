@@ -267,7 +267,9 @@ pub const G_T321: u8 = 11;
 pub const G_FISH: u8 = 12;
 /// stacked shared duplicates (never fold sources or targets)
 pub const G_SHSTACK: u8 = 13;
-pub const N_GROUPS: usize = 14;
+pub const G_HOOK6: u8 = 14;
+pub const G_ZIG6: u8 = 15;
+pub const N_GROUPS: usize = 16;
 
 /// Extra-feature bitmask (cfg.extra).
 pub const EX_BIGL: u32 = 1;
@@ -301,6 +303,12 @@ pub const EX_SHSTACK: u32 = 8388608;
 /// (pair2/line3/smallL3/line4), stacked alongside the shared family
 /// tables when EX_TINY is also set.
 pub const EX_TINYPOS: u32 = 16777216;
+/// L-hexomino (4-run + 3-run sharing a corner): the chain turning a
+/// corner. 48 placements, 6 orbits; contains every bigL placement.
+pub const EX_HOOK6: u32 = 33554432;
+/// Long zigzag (two 3-runs offset by one): wide-radius turns. 16
+/// placements, 2 orbits.
+pub const EX_ZIG6: u32 = 67108864;
 
 /// Global feature kinds, in table order.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -821,6 +829,49 @@ impl NTupleNet {
                 tables.push(Lut::new(m.pow(6)));
                 arity.push(6);
                 add_base(&mut images, cells, tables.len() - 1, G_FISH);
+            }
+            if cfg.extra & EX_SHSTACK != 0 {
+                tables.push(Lut::new(m.pow(6)));
+                arity.push(6);
+                for cells in &reps {
+                    add_base(&mut images, cells, tables.len() - 1, G_SHSTACK);
+                }
+            }
+        }
+        // L-hexominoes: 4-run + 3-run sharing a corner cell — the chain
+        // turning a corner. 48 placements, 6 orbits (computed exhaustively)
+        if cfg.extra & EX_HOOK6 != 0 {
+            let reps: [[(usize, usize); 6]; 6] = [
+                [(0, 0), (0, 1), (0, 2), (0, 3), (1, 0), (2, 0)],
+                [(0, 0), (0, 1), (0, 2), (0, 3), (1, 3), (2, 3)],
+                [(0, 0), (0, 1), (0, 2), (1, 2), (2, 2), (3, 2)],
+                [(0, 1), (0, 2), (0, 3), (1, 1), (2, 1), (3, 1)],
+                [(0, 1), (1, 1), (2, 1), (2, 2), (2, 3), (2, 4)],
+                [(0, 1), (1, 1), (2, 1), (3, 1), (3, 2), (3, 3)],
+            ];
+            for cells in &reps {
+                tables.push(Lut::new(m.pow(6)));
+                arity.push(6);
+                add_base(&mut images, cells, tables.len() - 1, G_HOOK6);
+            }
+            if cfg.extra & EX_SHSTACK != 0 {
+                tables.push(Lut::new(m.pow(6)));
+                arity.push(6);
+                for cells in &reps {
+                    add_base(&mut images, cells, tables.len() - 1, G_SHSTACK);
+                }
+            }
+        }
+        // long zigzags: two 3-runs offset by one. 16 placements, 2 orbits
+        if cfg.extra & EX_ZIG6 != 0 {
+            let reps: [[(usize, usize); 6]; 2] = [
+                [(0, 0), (0, 1), (0, 2), (1, 2), (1, 3), (1, 4)],
+                [(0, 1), (1, 1), (2, 1), (2, 2), (3, 2), (4, 2)],
+            ];
+            for cells in &reps {
+                tables.push(Lut::new(m.pow(6)));
+                arity.push(6);
+                add_base(&mut images, cells, tables.len() - 1, G_ZIG6);
             }
             if cfg.extra & EX_SHSTACK != 0 {
                 tables.push(Lut::new(m.pow(6)));
