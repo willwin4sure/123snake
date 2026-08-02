@@ -659,6 +659,11 @@ fn cmd_ntuple(args: &[String]) {
             t0.elapsed().as_secs_f64()
         );
     }
+    if let Some(sp) = arg_val(args, "--seed-from") {
+        let seed = NTupleNet::load(&sp, alpha).expect("load seed net");
+        let (matched, total) = net.seed_tables_from(&seed);
+        eprintln!("seeded {matched}/{total} tables from {sp}");
+    }
     if args.iter().any(|a| a == "--fold") {
         // validate on sample boards, then fold and re-validate
         let probes: Vec<_> = (0..200)

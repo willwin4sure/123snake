@@ -1121,6 +1121,64 @@ impl NTupleNet {
 
     /// Progressive growth: deactivate every group not in `groups` (their
     /// zero-init tables sit untouched until activated).
+    /// Copy table contents (weights + TC state) from another net for every
+    /// table whose signature matches: the sorted set of (cells, group) of
+    /// the images feeding it. Global-feature tables (no images) are matched
+    /// positionally from the end when both nets have identical global
+    /// counts. Unmatched tables keep their zero init. Returns
+    /// (matched, total) table counts.
+    pub fn seed_tables_from(&mut self, other: &NTupleNet) -> (usize, usize) {
+        use std::collections::HashMap;
+        fn sigs(net: &NTupleNet) -> Vec<Vec<(Vec<u8>, u8)>> {
+            let mut per: Vec<Vec<(Vec<u8>, u8)>> = vec![Vec::new(); net.ntab_stage];
+            for img in &net.images {
+                per[img.table].push((img.cells.clone(), img.group));
+            }
+            for p in per.iter_mut() {
+                p.sort();
+            }
+            per
+        }
+        let mine = sigs(self);
+        let theirs = sigs(other);
+        let mut by_sig: HashMap<&Vec<(Vec<u8>, u8)>, usize> = HashMap::new();
+        for (i, sg) in theirs.iter().enumerate() {
+            if !sg.is_empty() {
+                by_sig.insert(sg, i);
+            }
+        }
+        let mut matched = 0;
+        for (i, sg) in mine.iter().enumerate() {
+            if sg.is_empty() {
+                continue;
+            }
+            if let Some(&j) = by_sig.get(sg) {
+                if self.tables[i].w.len() == other.tables[j].w.len() {
+                    self.tables[i].w.copy_from_slice(&other.tables[j].w);
+                    self.tables[i].e.copy_from_slice(&other.tables[j].e);
+                    self.tables[i].a.copy_from_slice(&other.tables[j].a);
+                    self.tables[i].n.copy_from_slice(&other.tables[j].n);
+                    matched += 1;
+                }
+            }
+        }
+        // globals: trailing n_globals tables, matched in order
+        if self.n_globals == other.n_globals && self.n_globals > 0 {
+            for k in 0..self.n_globals {
+                let i = self.ntab_stage - self.n_globals + k;
+                let j = other.ntab_stage - other.n_globals + k;
+                if self.tables[i].w.len() == other.tables[j].w.len() {
+                    self.tables[i].w.copy_from_slice(&other.tables[j].w);
+                    self.tables[i].e.copy_from_slice(&other.tables[j].e);
+                    self.tables[i].a.copy_from_slice(&other.tables[j].a);
+                    self.tables[i].n.copy_from_slice(&other.tables[j].n);
+                    matched += 1;
+                }
+            }
+        }
+        (matched, self.ntab_stage)
+    }
+
     pub fn set_active_groups(&mut self, groups: &[u8]) {
         self.active = [false; N_GROUPS];
         for &g in groups {
