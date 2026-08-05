@@ -39,3 +39,17 @@ Dash: port 8279 (fill %, delta vs matched control).
 Hypotheses: fresh tests escape from premature strategy lock-in;
 seeded tests un-sticking an already-strong policy where single-step
 eps-greedy is instantly corrected.
+
+## Phase 1 verdicts (2.5M fresh, last-3-eval means, 10k-game evals)
+- W7-base 3404.2, W7-tiny2 3386.9 -> gap 17 inside the +-25 band,
+  tiny2 seeded per pre-agreed tie rule. tiny2 pack: no measurable
+  early-learning "snap" advantage at this scale.
+- W7-steer-f 3417.4 (+13 vs base, within noise: random steering is
+  harmless fresh, not clearly helpful). W7-burst-f 3339.0 (-65: random
+  bursts mildly hurt fresh training). Explore branches dropped from
+  the redrive per review.
+- OPS: the first seeded-arm sweep (8/2) died silently — this machine
+  has NO swap, memory pressure = SIGKILL with empty logs. Orchestrator
+  now verifies the "saved" line and retries (3x). Long pipelines need
+  caffeinate: idle sleep froze ~19h of wall time (trainer clock stops
+  during sleep). Redrive running: cont/hex6/l44/stair7/hash8.
