@@ -287,6 +287,35 @@ impl fmt::Display for Board {
 }
 
 #[cfg(test)]
+mod resume_tests {
+    use super::*;
+
+    /// from_state with a mid-game rng snapshot must resume the refill
+    /// stream exactly (the Durable Object hibernation contract).
+    #[test]
+    fn mid_game_state_resume_is_exact() {
+        let mut a = Board::new_game(42);
+        for _ in 0..5 {
+            let mv = a.legal_moves().into_iter().next().expect("has moves");
+            a.apply(&mv);
+        }
+        let mut b = Board::from_state(a.cells, a.score, a.rng.state);
+        b.moves_made = a.moves_made;
+        for _ in 0..5 {
+            let mv = a.legal_moves().into_iter().next().expect("has moves");
+            let mv2 = Move {
+                path: mv.path.clone(),
+            };
+            a.apply(&mv);
+            b.apply(&mv2);
+            assert_eq!(a.cells, b.cells, "refill stream diverged");
+            assert_eq!(a.score, b.score);
+            assert_eq!(a.rng.state, b.rng.state);
+        }
+    }
+}
+
+#[cfg(test)]
 #[allow(clippy::needless_range_loop)]
 mod tests {
     use super::*;

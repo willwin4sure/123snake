@@ -1,0 +1,24 @@
+name = "snake-api"
+main = "worker.js"
+compatibility_date = "2026-08-01"
+
+# The game engine (same wasm the solver lab embeds).
+rules = [
+  { type = "CompiledWasm", globs = ["**/*.wasm"] },
+]
+
+[[durable_objects.bindings]]
+name = "GAME"
+class_name = "GameSession"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GameSession"]
+
+# Created with: npx wrangler d1 create snake-scores
+# then paste the database_id it prints below, and initialize with:
+#   npx wrangler d1 execute snake-scores --remote --file schema.sql
+[[d1_databases]]
+binding = "DB"
+database_name = "snake-scores"
+database_id = "00000000-0000-0000-0000-000000000000"

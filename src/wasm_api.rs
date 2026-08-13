@@ -24,8 +24,12 @@ use crate::heuristics::{classify, evaluate_breakdown, TileClass, Weights};
 use crate::search::ExpectimaxPolicy;
 use std::cell::RefCell;
 
+/// Input scratch: 25 cells for analysis/moves, or 28 slots for
+/// game_restore (25 cells + score + rng state + moves_made).
+pub const INPUT_SLOTS: usize = 32;
+
 thread_local! {
-    static INPUT: RefCell<[u32; CELLS]> = const { RefCell::new([0; CELLS]) };
+    static INPUT: RefCell<[u32; INPUT_SLOTS]> = const { RefCell::new([0; INPUT_SLOTS]) };
     static RESULT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     static GAME: RefCell<Option<Board>> = const { RefCell::new(None) };
     static HISTORY: RefCell<Vec<Board>> = const { RefCell::new(Vec::new()) };
@@ -290,6 +294,42 @@ pub extern "C" fn game_apply(len: u32) -> u32 {
         true
     });
     u32::from(ok)
+}
+
+/// Serialize the authoritative game (cells, score, rng state, moves) so a
+/// host (e.g. a Durable Object) can persist it across wasm instances.
+#[no_mangle]
+pub extern "C" fn game_dump() -> *const u8 {
+    let json = GAME.with(|g| {
+        let g = g.borrow();
+        let b = g.as_ref().expect("game_new must be called first");
+        let cells: Vec<String> = b.cells.iter().map(|v| v.to_string()).collect();
+        format!(
+            "{{\"cells\":[{}],\"score\":{},\"rng\":{},\"moves\":{}}}",
+            cells.join(","),
+            b.score,
+            b.rng.state,
+            b.moves_made
+        )
+    });
+    set_result(json)
+}
+
+/// Restore a game from 28 u32 input slots: 25 cells, score, rng state,
+/// moves_made. Resumes the refill stream exactly (mulberry32 state is
+/// self-contained).
+#[no_mangle]
+pub extern "C" fn game_restore() -> u32 {
+    let slots = INPUT.with(|i| *i.borrow());
+    let mut cells = [0u64; CELLS];
+    for (dst, &src) in cells.iter_mut().zip(slots.iter()) {
+        *dst = src as u64;
+    }
+    let mut b = Board::from_state(cells, slots[CELLS] as u64, slots[CELLS + 1]);
+    b.moves_made = slots[CELLS + 2];
+    GAME.with(|g| *g.borrow_mut() = Some(b));
+    HISTORY.with(|h| h.borrow_mut().clear());
+    1
 }
 
 #[no_mangle]
