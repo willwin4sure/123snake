@@ -134,7 +134,7 @@ export default {
         since = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
       }
       const { results } = await env.DB.prepare(
-        "SELECT name, score, ts FROM scores WHERE ts>=? ORDER BY score DESC, ts ASC LIMIT 25"
+        "SELECT name, score, ts FROM scores WHERE ts>=? ORDER BY score DESC, ts ASC LIMIT 10"
       ).bind(since).all();
       return json({ rows: results });
     }
