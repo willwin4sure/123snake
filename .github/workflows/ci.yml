@@ -16,5 +16,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --release -- -D warnings
-      - run: cargo test --release
+      # heavy ntuple tests build multi-GB tables; cap parallelism so
+      # overlapping allocations fit in runner memory (flaky OOM otherwise)
+      - run: cargo test --release -- --test-threads=2
       - run: cargo build --profile wasm-release --target wasm32-unknown-unknown --lib
