@@ -59,6 +59,9 @@
   #lbrows li.me{background:color-mix(in srgb, var(--ink) 9%, transparent);
     border-radius:8px;border-bottom-color:transparent;}
   #lbrows li:has(+ li.me){border-bottom-color:transparent;}
+  .metag{font-size:10px;font-weight:800;letter-spacing:.05em;
+    text-transform:uppercase;border:1.5px solid currentColor;opacity:.6;
+    border-radius:99px;padding:1px 7px;margin-left:7px;vertical-align:1px;}
   #lbfoot{font-size:11.5px;opacity:.6;margin:10px 0 0;}
   #ini{width:11em;text-align:center;font:inherit;font-weight:800;padding:6px;
     border-radius:8px;border:2px solid currentColor;background:transparent;
@@ -574,6 +577,12 @@
         em.textContent=(i+1)+'.';
         l.appendChild(em);
         l.appendChild(document.createTextNode(row.name));
+        if(mine&&row.name.toLowerCase()===mine){
+          var tag=document.createElement('span');
+          tag.className='metag';
+          tag.textContent='you';
+          l.appendChild(tag);
+        }
         var r=document.createElement('span');
         r.textContent=row.score;
         li.appendChild(l);li.appendChild(r);

@@ -111,7 +111,7 @@ export default {
         "INSERT INTO scores(ts, name, score, moves) VALUES(?,?,?,?)"
       ).bind(Date.now(), clean, fin.score, fin.moves).run();
       const better = await env.DB.prepare(
-        "SELECT COUNT(*) AS n FROM scores WHERE score>? AND ts>=?"
+        "SELECT COUNT(DISTINCT lower(name)) AS n FROM scores WHERE score>? AND ts>=?"
       ).bind(fin.score, Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate())).first();
       return json({ ok: 1, score: fin.score, daily_rank: better.n + 1 });
     }
@@ -133,8 +133,13 @@ export default {
       } else if (period === "monthly") {
         since = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
       }
+      // one entry per name (case-insensitive), each at its best score
       const { results } = await env.DB.prepare(
-        "SELECT name, score, ts FROM scores WHERE ts>=? ORDER BY score DESC, ts ASC LIMIT 10"
+        "SELECT name, score, ts FROM (" +
+        "  SELECT name, score, ts, ROW_NUMBER() OVER (" +
+        "    PARTITION BY lower(name) ORDER BY score DESC, ts ASC) rn" +
+        "  FROM scores WHERE ts>=?" +
+        ") WHERE rn=1 ORDER BY score DESC, ts ASC LIMIT 10"
       ).bind(since).all();
       return json({ rows: results });
     }
