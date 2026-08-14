@@ -20,28 +20,27 @@
   .wrap{max-width:470px;margin:0 auto;padding:26px 16px 44px;}
 
   [hidden]{display:none!important}
-  .modes{display:flex;gap:8px;margin:0 0 16px;}
-  .modes button{padding:8px 24px;font-weight:800;opacity:.6;}
-  .modes button.on{opacity:1;border:2.5px solid var(--ink);
-    padding:7px 22.5px;}
   .lbpanel{margin-top:18px;border-radius:14px;--acc:hsl(112,55%,70%);
-    padding:12px 14px;background:var(--well);border:1px solid var(--line);
-    border-top:4px solid var(--acc);display:none;}
+    padding:12px 14px;border:1px solid var(--line);
+    background:color-mix(in srgb, var(--acc) 16%, var(--well));}
   .lbpanel[data-p="monthly"]{--acc:hsl(48,88%,66%);}
   .lbpanel[data-p="alltime"]{--acc:hsl(27,88%,66%);}
-  .wrap.ranked-ui .lbpanel{display:block;}
-  .lbpanel h3{margin:0 0 8px;font-size:14px;letter-spacing:.06em;
-    text-transform:uppercase;opacity:.7;}
-  .lbtabs{display:flex;gap:4px;margin:0 0 8px;}
+  .lbpanel h3{margin:0 0 9px;font-size:14px;letter-spacing:.06em;
+    text-transform:uppercase;opacity:.7;padding-bottom:8px;
+    border-bottom:2px solid color-mix(in srgb, var(--ink) 22%, transparent);}
+  .lbtabs{display:flex;gap:4px;margin:0 0 8px;padding-bottom:9px;
+    border-bottom:2px solid color-mix(in srgb, var(--ink) 22%, transparent);}
   .lbtabs button{flex:1;padding:3px 0;font-size:12px;font-weight:700;
     border-radius:8px;border:1px solid transparent;background:transparent;
     cursor:pointer;font-family:inherit;color:inherit;opacity:.55;}
   .lbtabs button.on{opacity:1;border-color:var(--acc);
     background:var(--acc);color:rgba(30,34,28,.88);}
   #lbrows{list-style:none;margin:0;padding:0;font-variant-numeric:tabular-nums;
-    font-size:13.5px;min-height:120px;}
-  #lbrows li{display:flex;justify-content:space-between;gap:8px;padding:3px 2px;
-    font-weight:700;border-bottom:1px solid var(--line);}
+    font-size:13.5px;min-height:120px;max-height:338px;overflow-y:auto;}
+  #lbrows li{display:flex;justify-content:space-between;gap:8px;padding:4px 8px;
+    font-weight:700;
+    border-bottom:2px solid color-mix(in srgb, var(--ink) 14%, transparent);}
+  #lbrows li:last-child{border-bottom:none;}
   #lbrows li span:first-child{overflow:hidden;text-overflow:ellipsis;
     white-space:nowrap;min-width:0;}
   #lbrows li span:first-child em{font-style:normal;opacity:.5;margin-right:6px;
@@ -52,7 +51,8 @@
   #lbrows li.m1 em{background:hsl(45,85%,60%);}
   #lbrows li.m2 em{background:hsl(210,14%,76%);}
   #lbrows li.m3 em{background:hsl(25,60%,62%);}
-  #lbrows li.me{outline:2px solid currentColor;border-radius:6px;padding:3px 6px;}
+  #lbrows li.me{background:color-mix(in srgb, var(--ink) 9%, transparent);
+    border-radius:8px;}
   #lbfoot{font-size:11.5px;opacity:.6;margin:10px 0 0;}
   #ini{width:11em;text-align:center;font:inherit;font-weight:800;padding:6px;
     border-radius:8px;border:2px solid currentColor;background:transparent;
@@ -129,6 +129,9 @@
   .foot{color:var(--muted);font-size:11.5px;text-align:center;margin:20px 0 0;opacity:.8;}
   .foot .gh{color:inherit;display:inline-flex;align-items:center;gap:4px;margin-left:8px;
     text-decoration:none;border-bottom:1px solid currentColor;}
+  .foot2{display:flex;align-items:center;justify-content:center;gap:4px;
+    margin-top:5px;}
+  .foot2 .gh{margin-left:0;}
   .foot .gh svg{flex:none;}
   .foot .gh:hover{opacity:1;color:var(--ink);}
   @media (prefers-reduced-motion:reduce){
@@ -144,10 +147,6 @@
       <div class="stat"><span class="lbl">Best</span><b id="best">0</b></div>
     </div>
   </header>
-  <div class="modes" role="tablist">
-    <button id="m-casual" class="on">Casual</button>
-    <button id="m-ranked">Ranked</button>
-  </div>
   <div id="board">
     <div id="over" hidden>
       <h2>No moves left</h2>
@@ -178,7 +177,7 @@
     <p id="lbfoot"></p>
   </aside>
   <p class="foot">A recreation of 123 Snake (Integer Snake), made with <a href="https://claude.com/claude-code" style="color:inherit">Claude Fable 5</a>.
-    <span id="visitsfoot"></span><a class="gh" href="https://github.com/willwin4sure/123snake" aria-label="Star the source on GitHub"><svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg> source</a></p>
+    <span class="foot2"><span id="visitsfoot"></span><a class="gh" href="https://github.com/willwin4sure/123snake" aria-label="Star the source on GitHub"><svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg> source</a></span></p>
 </div>
 <script>
 (function(){
@@ -188,7 +187,8 @@
     var m=location.search.match(/[?&]api=([^&]+)/);
     return m?decodeURIComponent(m[1]):'https://api.123snake.com';
   })();
-  var ranked=false, rankedId=null, visits=null;
+  var ranked=true, rankedId=null, moveN=0, offline=false, visits=null;
+  var KG='snake123.game';
   function api(path,body){
     return fetch(API+path,{
       method:body!==undefined?'POST':'GET',
@@ -196,7 +196,11 @@
       body:body!==undefined?JSON.stringify(body):undefined
     }).then(function(r){
       return r.json().then(function(j){
-        if(!r.ok) throw new Error(j.error||('http '+r.status));
+        if(!r.ok){
+          var e=new Error(j.error||('http '+r.status));
+          if(j.moves!==undefined) e.state=j;
+          throw e;
+        }
         return j;
       });
     });
@@ -329,23 +333,42 @@
     for(r=0;r<N;r++){out.push([]);for(c=0;c<N;c++)out[r].push(flat[r*N+c]);}
     return out;
   }
-  function newGame(){
-    if(ranked){
-      lock=true; overEl.hidden=true;
-      api('/api/new',{}).then(function(g){
-        rankedId=g.id; score=0;
-        build(to2d(g.cells)); lock=false; hud(); refresh();
-      }).catch(function(err){
-        lock=false; setRanked(false);
-        newGame();
-        shareFeedback('Ranked unavailable: '+err.message);
-      });
-      return;
-    }
-    rankedId=null;
+  function localGame(){
+    ranked=false; offline=true; rankedId=null;
     score=0; overEl.hidden=true;
     rngState=rndSeed();
     build(freshVals()); hud(); refresh();
+    shareFeedback('Offline \u2014 scores won\u2019t submit');
+  }
+  function startFrom(g){
+    ranked=true; offline=false;
+    rankedId=g.id; moveN=g.moves||0; score=g.score||0;
+    localStorage.setItem(KG,g.id);
+    overEl.hidden=true;
+    build(to2d(g.cells)); lock=false; hud(); refresh();
+    if(g.over) gameOver();
+  }
+  function newGame(){
+    lock=true; overEl.hidden=true;
+    localStorage.removeItem(KG);
+    api('/api/new',{}).then(function(g){
+      startFrom(g);
+    }).catch(function(){
+      lock=false; localGame();
+    });
+  }
+  function resumeOrNew(){
+    var id=localStorage.getItem(KG);
+    if(!id){newGame();return;}
+    lock=true;
+    api('/api/state?id='+id).then(function(st){
+      if(st.over){localStorage.removeItem(KG);newGame();return;}
+      st.id=id;
+      startFrom(st);
+    }).catch(function(err){
+      if(/no such game/.test(err.message)){localStorage.removeItem(KG);newGame();}
+      else{lock=false; localGame();}
+    });
   }
 
   function hitCell(e){
@@ -407,20 +430,38 @@
     if(e.key==='Escape'){path=[];refresh();}
   });
 
+  function resyncFrom(st){
+    moveN=st.moves; score=st.score;
+    build(to2d(st.cells)); hud(); refresh();
+    if(st.over) gameOver();
+  }
   function commitPath(){
     if(!ranked){doMerge(null);return;}
     var idxs=path.map(function(t){return t.r*N+t.c});
     lock=true;
-    api('/api/move',{id:rankedId,path:idxs}).then(function(r){
+    api('/api/move',{id:rankedId,path:idxs,n:moveN}).then(function(r){
+      moveN=r.moves;
       lock=false; doMerge(r);
     }).catch(function(err){
-      lock=false; path=[]; refresh();
-      if(/no such game/.test(err.message)){
-        shareFeedback('Session expired \u2014 dealing a new ranked game');
-        newGame();
-      }else{
-        shareFeedback(err.message);
+      if(err.state&&err.state.moves!==undefined){
+        lock=false; path=[];
+        resyncFrom(err.state);
+        return;
       }
+      if(/no such game/.test(err.message)){
+        lock=false; path=[]; refresh();
+        shareFeedback('Session expired \u2014 dealing a new game');
+        newGame();
+        return;
+      }
+      // network hiccup: ask the server what actually happened
+      api('/api/state?id='+rankedId).then(function(st){
+        lock=false; path=[];
+        resyncFrom(st);
+      }).catch(function(){
+        lock=false; path=[]; refresh();
+        shareFeedback('Connection lost \u2014 move not made, try again');
+      });
     });
   }
 
@@ -483,6 +524,7 @@
     submitBtn.disabled=true;
     api('/api/finish',{id:rankedId,name:name}).then(function(r){
       localStorage.setItem(KI,name);
+      localStorage.removeItem(KG);
       rankedId=null;
       submitRow.hidden=true;
       submitMsg.textContent='#'+r.daily_rank+' today';
@@ -497,14 +539,6 @@
   }
 
   var curPeriod='daily';
-  function setRanked(on){
-    ranked=on;
-    casualTab.classList.toggle('on',!on);
-    rankedTab.classList.toggle('on',on);
-    wrapEl.classList.toggle('ranked-ui',on);
-    layout();
-    if(on) openLB(curPeriod);
-  }
 
   function renderVisits(){
     if(visits) document.getElementById('visitsfoot').textContent=
@@ -687,24 +721,13 @@
     if(soundOn){initAudio();sTick(0);}
     setMuteLabel();
   });
-  var casualTab=document.getElementById('m-casual'),
-      rankedTab=document.getElementById('m-ranked'),
-      wrapEl=document.querySelector('.wrap'),
-      lbEl=document.getElementById('lb'),
+  var lbEl=document.getElementById('lb'),
       lbRows=document.getElementById('lbrows'),
       lbFoot=document.getElementById('lbfoot'),
       submitRow=document.getElementById('submitrow'),
       submitMsg=document.getElementById('submitmsg'),
       submitBtn=document.getElementById('submitscore'),
       iniEl=document.getElementById('ini');
-  casualTab.addEventListener('click',function(){
-    if(!ranked) return;
-    setRanked(false); newGame();
-  });
-  rankedTab.addEventListener('click',function(){
-    if(ranked) return;
-    setRanked(true); newGame();
-  });
   lbEl.querySelectorAll('.lbtabs button').forEach(function(b){
     b.addEventListener('click',function(){openLB(b.dataset.p)});
   });
@@ -712,9 +735,9 @@
   iniEl.addEventListener('keydown',function(e){if(e.key==='Enter')submitScore()});
   api('/api/hit',{}).then(function(h){
     visits=h;
-    if(lbFoot.textContent) renderVisits();
+    renderVisits();
   }).catch(function(){});
-  setInterval(function(){if(ranked)openLB(curPeriod)},30000);
+  setInterval(function(){if(!offline)openLB(curPeriod)},30000);
   document.getElementById('newgame').addEventListener('click',newGame);
   document.getElementById('again').addEventListener('click',newGame);
   window.addEventListener('resize',layout);
@@ -740,6 +763,7 @@
   };
 
   layout();
-  newGame();
+  resumeOrNew();
+  openLB('daily');
 })();
 </script>

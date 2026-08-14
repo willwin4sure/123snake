@@ -82,14 +82,14 @@ export default {
 
     if (p === "/api/move" && req.method === "POST") {
       const body = await req.json().catch(() => ({}));
-      const { id, path } = body;
+      const { id, path, n } = body;
       if (typeof id !== "string" || !/^[0-9a-f]{32}$/.test(id) || !Array.isArray(path)) {
         return json({ error: "bad request" }, 400);
       }
       const stub = env.GAME.get(env.GAME.idFromName(id));
       const r = await stub.fetch("https://do/move", {
         method: "POST",
-        body: JSON.stringify({ path }),
+        body: JSON.stringify({ path, n }),
       });
       return json(await r.json(), r.status);
     }
@@ -114,6 +114,14 @@ export default {
         "SELECT COUNT(*) AS n FROM scores WHERE score>? AND ts>=?"
       ).bind(fin.score, Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate())).first();
       return json({ ok: 1, score: fin.score, daily_rank: better.n + 1 });
+    }
+
+    if (p === "/api/state" && req.method === "GET") {
+      const id = url.searchParams.get("id") || "";
+      if (!/^[0-9a-f]{32}$/.test(id)) return json({ error: "bad request" }, 400);
+      const stub = env.GAME.get(env.GAME.idFromName(id));
+      const r = await stub.fetch("https://do/state");
+      return json(await r.json(), r.status);
     }
 
     if (p === "/api/board" && req.method === "GET") {
@@ -218,8 +226,19 @@ export class GameSession {
       const seed = new Uint32Array(1);
       crypto.getRandomValues(seed);
       const st = this.readResult(this.ex.game_new(seed[0]));
-      await this.persist();
-      return Response.json({ cells: st.cells, score: st.score, over: st.over });
+      const dump = await this.persist();
+      return Response.json({
+        cells: st.cells, score: st.score, over: st.over, moves: dump.moves,
+      });
+    }
+
+    if (path === "/state") {
+      const saved = await this.load();
+      if (!saved) return Response.json({ error: "no such game" }, { status: 404 });
+      const st = this.readResult(this.ex.game_state());
+      return Response.json({
+        cells: st.cells, score: st.score, over: st.over, moves: saved.moves,
+      });
     }
 
     if (path === "/move") {
@@ -228,6 +247,15 @@ export class GameSession {
       if (saved.moves >= 3000) return Response.json({ error: "move cap" }, { status: 400 });
       const body = await req.json().catch(() => ({}));
       const p = body.path;
+      // sequence check: a retried request that already applied must not
+      // double-apply; client resyncs from the returned state instead
+      if (Number.isInteger(body.n) && body.n !== saved.moves) {
+        const st0 = this.readResult(this.ex.game_state());
+        return Response.json({
+          error: "desync",
+          cells: st0.cells, score: st0.score, over: st0.over, moves: saved.moves,
+        }, { status: 409 });
+      }
       if (
         !Array.isArray(p) || p.length < 2 || p.length > 25 ||
         !p.every((c) => Number.isInteger(c) && c >= 0 && c < 25)
@@ -239,8 +267,10 @@ export class GameSession {
         return Response.json({ error: "illegal move" }, { status: 400 });
       }
       const st = this.readResult(this.ex.game_state());
-      await this.persist();
-      return Response.json({ cells: st.cells, score: st.score, over: st.over });
+      const dump = await this.persist();
+      return Response.json({
+        cells: st.cells, score: st.score, over: st.over, moves: dump.moves,
+      });
     }
 
     if (path === "/finish") {
