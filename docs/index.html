@@ -568,7 +568,7 @@
 
   function renderVisits(){
     if(visits) document.getElementById('visitsfoot').textContent=
-      visits.total+' visits \u00B7 '+visits.today_unique+' today \u00B7 ';
+      visits.total+' visits \u00B7 '+visits.today_unique+(visits.today_unique===1?' visitor':' visitors')+' today \u00B7 ';
   }
   function openLB(period){
     curPeriod=period;
