@@ -16,6 +16,7 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%23F6DC7D'/%3E%3Ctext x='50' y='72' font-size='62' font-weight='bold' text-anchor='middle' font-family='Arial'%3E2%3C/text%3E%3C/svg%3E">
 </head>
 <body>
+<meta charset="utf-8">
 <style>
   :root{
     --bg:#F3F5F0; --ink:#20241F; --muted:#67705F; --well:#E2E6DB;
@@ -34,6 +35,37 @@
   body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);
     -webkit-tap-highlight-color:transparent;}
   .wrap{max-width:470px;margin:0 auto;padding:26px 16px 44px;}
+
+  [hidden]{display:none!important}
+  .modes{display:flex;gap:8px;margin:0 0 16px;}
+  .modes button{padding:8px 24px;font-weight:800;opacity:.6;}
+  .modes button.on{opacity:1;border:2.5px solid var(--ink);
+    padding:7px 22.5px;}
+  .lbpanel{margin-top:18px;border-radius:14px;
+    padding:12px 14px;background:var(--well);border:1px solid var(--line);
+    display:none;}
+  .wrap.ranked-ui .lbpanel{display:block;}
+  .lbpanel h3{margin:0 0 8px;font-size:14px;letter-spacing:.06em;
+    text-transform:uppercase;opacity:.7;}
+  .lbtabs{display:flex;gap:4px;margin:0 0 8px;}
+  .lbtabs button{flex:1;padding:3px 0;font-size:12px;font-weight:700;
+    border-radius:8px;border:1px solid transparent;background:transparent;
+    cursor:pointer;font-family:inherit;color:inherit;opacity:.55;}
+  .lbtabs button.on{opacity:1;border-color:currentColor;}
+  #lbrows{list-style:none;margin:0;padding:0;font-variant-numeric:tabular-nums;
+    font-size:13.5px;min-height:120px;}
+  #lbrows li{display:flex;justify-content:space-between;gap:8px;padding:3px 2px;
+    font-weight:700;border-bottom:1px solid var(--line);}
+  #lbrows li span:first-child{overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap;min-width:0;}
+  #lbrows li span:first-child em{font-style:normal;opacity:.5;margin-right:5px;}
+  #lbrows li.me{outline:2px solid currentColor;border-radius:6px;padding:3px 6px;}
+  #lbfoot{font-size:11.5px;opacity:.6;margin:10px 0 0;}
+  #ini{width:11em;text-align:center;font:inherit;font-weight:800;padding:6px;
+    border-radius:8px;border:2px solid currentColor;background:transparent;
+    color:inherit;}
+  #submitmsg{font-weight:700;margin:4px 0;}
+
   header{display:flex;justify-content:space-between;align-items:center;gap:12px;
     flex-wrap:wrap;margin:0 0 18px;}
   h1{display:flex;align-items:center;gap:5px;margin:0;font-size:27px;font-weight:800;
@@ -75,8 +107,11 @@
     color:var(--ink);pointer-events:none;animation:rise .8s ease-out forwards;z-index:3;}
   @keyframes rise{0%{translate:0 0;opacity:1}100%{translate:0 -48px;opacity:0}}
   #over{position:absolute;inset:0;border-radius:18px;background:var(--scrim);
-    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
-    text-align:center;z-index:5;}
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
+    text-align:center;z-index:5;padding:18px;}
+  #over p{margin:0;}
+  #submitrow{margin-top:2px;}
+  #submitrow+#submitmsg{margin:0;}
   #over[hidden]{display:none;}
   #over h2{margin:0;font-size:24px;font-weight:800;}
   .overbtns{display:flex;gap:10px;}
@@ -116,10 +151,19 @@
       <div class="stat"><span class="lbl">Best</span><b id="best">0</b></div>
     </div>
   </header>
+  <div class="modes" role="tablist">
+    <button id="m-casual" class="on">Casual</button>
+    <button id="m-ranked">Ranked</button>
+  </div>
   <div id="board">
     <div id="over" hidden>
       <h2>No moves left</h2>
       <p id="final"></p>
+      <div class="overbtns" id="submitrow" hidden>
+        <input id="ini" maxlength="16" placeholder="display name" autocomplete="off">
+        <button id="submitscore">Submit score</button>
+      </div>
+      <p id="submitmsg" hidden></p>
       <div class="overbtns">
         <button id="again">Play again</button>
         <button id="share">Share score<span class="tip" id="sharetip"></span></button>
@@ -130,13 +174,40 @@
     <button id="newgame">New game</button>
     <button id="mute">Sound: on</button>
   </div>
+  <aside class="lbpanel" id="lb">
+    <h3>Leaderboard</h3>
+    <div class="lbtabs">
+      <button data-p="daily" class="on">Today</button>
+      <button data-p="monthly">Month</button>
+      <button data-p="alltime">All time</button>
+    </div>
+    <ol id="lbrows"></ol>
+    <p id="lbfoot"></p>
+  </aside>
   <p class="foot">A recreation of 123 Snake (Integer Snake), made with <a href="https://claude.com/claude-code" style="color:inherit">Claude Fable 5</a>.
     <a class="gh" href="https://github.com/willwin4sure/123snake" aria-label="Star the source on GitHub"><svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg> source</a></p>
 </div>
 <script>
 (function(){
   'use strict';
-  var N=5, KB='snake123.best', KS='snake123.sound';
+  var N=5, KB='snake123.best', KS='snake123.sound', KI='snake123.ini';
+  var API=(function(){
+    var m=location.search.match(/[?&]api=([^&]+)/);
+    return m?decodeURIComponent(m[1]):'https://api.123snake.com';
+  })();
+  var ranked=false, rankedId=null, visits=null;
+  function api(path,body){
+    return fetch(API+path,{
+      method:body!==undefined?'POST':'GET',
+      headers:body!==undefined?{'content-type':'application/json'}:undefined,
+      body:body!==undefined?JSON.stringify(body):undefined
+    }).then(function(r){
+      return r.json().then(function(j){
+        if(!r.ok) throw new Error(j.error||('http '+r.status));
+        return j;
+      });
+    });
+  }
   var board=document.getElementById('board');
   var scoreEl=document.getElementById('score'), bestEl=document.getElementById('best');
   var overEl=document.getElementById('over'), finalEl=document.getElementById('final');
@@ -260,7 +331,25 @@
       t.ord.className=nx?'ord dir'+(nx.c>t.c?'':nx.c<t.c?' d180':nx.r>t.r?' d90':' d270'):'ord';
     });
   }
+  function to2d(flat){
+    var out=[],r,c;
+    for(r=0;r<N;r++){out.push([]);for(c=0;c<N;c++)out[r].push(flat[r*N+c]);}
+    return out;
+  }
   function newGame(){
+    if(ranked){
+      lock=true; overEl.hidden=true;
+      api('/api/new',{}).then(function(g){
+        rankedId=g.id; score=0;
+        build(to2d(g.cells)); lock=false; hud(); refresh();
+      }).catch(function(err){
+        lock=false; setRanked(false);
+        newGame();
+        shareFeedback('Ranked unavailable: '+err.message);
+      });
+      return;
+    }
+    rankedId=null;
     score=0; overEl.hidden=true;
     rngState=rndSeed();
     build(freshVals()); hud(); refresh();
@@ -316,7 +405,7 @@
     var g=gesture; gesture=null;
     if(lock) return;
     if(g.deselect&&!g.added){path=[];sPop();}
-    else if(path.length>=2&&(g.added||g.downHead)) doMerge();
+    else if(path.length>=2&&(g.added||g.downHead)) commitPath();
     refresh();
   }
   board.addEventListener('pointerup',endGesture);
@@ -325,7 +414,24 @@
     if(e.key==='Escape'){path=[];refresh();}
   });
 
-  function doMerge(){
+  function commitPath(){
+    if(!ranked){doMerge(null);return;}
+    var idxs=path.map(function(t){return t.r*N+t.c});
+    lock=true;
+    api('/api/move',{id:rankedId,path:idxs}).then(function(r){
+      lock=false; doMerge(r);
+    }).catch(function(err){
+      lock=false; path=[]; refresh();
+      if(/no such game/.test(err.message)){
+        shareFeedback('Session expired \u2014 dealing a new ranked game');
+        newGame();
+      }else{
+        shareFeedback(err.message);
+      }
+    });
+  }
+
+  function doMerge(server){
     lock=true; hud();
     var head=path[path.length-1];
     var sum=path[0].v*path.length;
@@ -343,14 +449,16 @@
       setV(head,sum);
       head.el.classList.add('pop');
       setTimeout(function(){head.el.classList.remove('pop')},260);
-      score+=sum; hud();
+      score=server?server.score:score+sum; hud();
       floatScore(sum,head);
       cells.forEach(function(rc,i){
-        setTimeout(function(){makeTile(rc[0],rc[1],rnd13(),true)},60+i*35);
+        var v=server?server.cells[rc[0]*N+rc[1]]:rnd13();
+        setTimeout(function(){makeTile(rc[0],rc[1],v,true)},60+i*35);
       });
       setTimeout(function(){
         lock=false; hud(); refresh();
-        if(!movesAvail(values())) gameOver();
+        var over=server?server.over===1:!movesAvail(values());
+        if(over) gameOver();
       },cells.length*35+300);
     },175);
   }
@@ -363,8 +471,80 @@
   }
   function gameOver(){
     finalEl.textContent='Final score: '+score;
+    submitRow.hidden=!ranked||!rankedId;
+    submitMsg.hidden=true;
+    if(ranked&&rankedId){
+      iniEl.value=localStorage.getItem(KI)||'';
+    }
     overEl.hidden=false;
     sOver();
+  }
+
+  function submitScore(){
+    var name=(iniEl.value||'').replace(/[^\w .-]/g,'').replace(/\s+/g,' ').trim().slice(0,16);
+    if(name.length<2){
+      submitMsg.textContent='Name: 2–16 characters';
+      submitMsg.hidden=false;
+      return;
+    }
+    submitBtn.disabled=true;
+    api('/api/finish',{id:rankedId,name:name}).then(function(r){
+      localStorage.setItem(KI,name);
+      rankedId=null;
+      submitRow.hidden=true;
+      submitMsg.textContent='#'+r.daily_rank+' today';
+      submitMsg.hidden=false;
+      submitBtn.disabled=false;
+      openLB('daily');
+    }).catch(function(err){
+      submitBtn.disabled=false;
+      submitMsg.textContent=err.message;
+      submitMsg.hidden=false;
+    });
+  }
+
+  var curPeriod='daily';
+  function setRanked(on){
+    ranked=on;
+    casualTab.classList.toggle('on',!on);
+    rankedTab.classList.toggle('on',on);
+    wrapEl.classList.toggle('ranked-ui',on);
+    layout();
+    if(on) openLB(curPeriod);
+  }
+
+  function renderVisits(){
+    if(visits) lbFoot.textContent=visits.total+' visits \u00B7 '+visits.today_unique+' today';
+  }
+  function openLB(period){
+    curPeriod=period;
+    var tabs=lbEl.querySelectorAll('.lbtabs button');
+    tabs.forEach(function(b){b.classList.toggle('on',b.dataset.p===period)});
+    api('/api/board?p='+period).then(function(b){
+      lbRows.textContent='';
+      var mine=(localStorage.getItem(KI)||'').toLowerCase();
+      if(!b.rows.length){
+        var li=document.createElement('li');
+        li.textContent='No scores yet \u2014 be first!';
+        lbRows.appendChild(li);
+      }
+      b.rows.forEach(function(row,i){
+        var li=document.createElement('li');
+        if(mine&&row.name.toLowerCase()===mine)li.className='me';
+        var l=document.createElement('span');
+        var em=document.createElement('em');
+        em.textContent=(i+1)+'.';
+        l.appendChild(em);
+        l.appendChild(document.createTextNode(row.name));
+        var r=document.createElement('span');
+        r.textContent=row.score;
+        li.appendChild(l);li.appendChild(r);
+        lbRows.appendChild(li);
+      });
+      renderVisits();
+    }).catch(function(err){
+      lbFoot.textContent=err.message;
+    });
   }
   var AC=null, soundOn=localStorage.getItem(KS)!=='off';
   function setMuteLabel(){muteBtn.textContent='Sound: '+(soundOn?'on':'off')}
@@ -508,6 +688,34 @@
     if(soundOn){initAudio();sTick(0);}
     setMuteLabel();
   });
+  var casualTab=document.getElementById('m-casual'),
+      rankedTab=document.getElementById('m-ranked'),
+      wrapEl=document.querySelector('.wrap'),
+      lbEl=document.getElementById('lb'),
+      lbRows=document.getElementById('lbrows'),
+      lbFoot=document.getElementById('lbfoot'),
+      submitRow=document.getElementById('submitrow'),
+      submitMsg=document.getElementById('submitmsg'),
+      submitBtn=document.getElementById('submitscore'),
+      iniEl=document.getElementById('ini');
+  casualTab.addEventListener('click',function(){
+    if(!ranked) return;
+    setRanked(false); newGame();
+  });
+  rankedTab.addEventListener('click',function(){
+    if(ranked) return;
+    setRanked(true); newGame();
+  });
+  lbEl.querySelectorAll('.lbtabs button').forEach(function(b){
+    b.addEventListener('click',function(){openLB(b.dataset.p)});
+  });
+  submitBtn.addEventListener('click',submitScore);
+  iniEl.addEventListener('keydown',function(e){if(e.key==='Enter')submitScore()});
+  api('/api/hit',{}).then(function(h){
+    visits=h;
+    if(lbFoot.textContent) renderVisits();
+  }).catch(function(){});
+  setInterval(function(){if(ranked)openLB(curPeriod)},30000);
   document.getElementById('newgame').addEventListener('click',newGame);
   document.getElementById('again').addEventListener('click',newGame);
   window.addEventListener('resize',layout);
@@ -527,7 +735,7 @@
       refresh();
       return true;
     },
-    release:function(){if(path.length>=2)doMerge();},
+    release:function(){if(path.length>=2)commitPath();},
     locked:function(){return lock},
     forceOver:function(){gameOver()}
   };
