@@ -6,3 +6,5 @@ ml/*.pt
 ml/*.bin
 .claude/
 ml/data/
+ml/logs/
+server/node_modules/

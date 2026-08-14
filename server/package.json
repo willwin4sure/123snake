@@ -1,0 +1,16 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker + Durable Objects + D1. One Durable Object per ranked game holds the authoritative board via `engine.wasm` (the same engine the lab embeds — `game_new` / `game_apply` / `game_dump` / `game_restore`); clients only submit chain paths, so scores cannot be fabricated. Scores live in D1; leaderboards are period queries (daily / monthly / all-time, UTC). Also serves the site visit counter (`/api/hit`, daily uniques via hashed ip+day — no raw IPs stored).",
+  "main": "worker.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "obscenity": "^0.4.6"
+  }
+}

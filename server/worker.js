@@ -5,6 +5,11 @@
 // chain paths. Scores land in D1; leaderboards are period queries.
 
 import ENGINE from "./engine.wasm";
+import {
+  RegExpMatcher,
+  englishDataset,
+  englishRecommendedTransformers,
+} from "obscenity";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -26,32 +31,35 @@ const SLUR_SUBSTR = [
   "nigg", "niger", "fagg", "kike", "spic", "wetback", "chink", "tranny",
   "retard", "raghead", "beaner", "gook", "coon",
 ];
-// Profanity, three safety tiers to stay Scunthorpe-proof:
-// contained anywhere (never innocently embedded), token prefix
-// (catches fuckface but not Scunthorpe), and token exact (short words
-// like ass/cum that live inside many real names).
-const PROF_ANY = [
-  "fuck", "shit", "bitch", "whore", "slut", "porn", "penis", "pussy",
-  "dildo",
+// Primary filter: the obscenity library (standard maintained English
+// dataset + obfuscation-aware matching with word-boundary handling).
+// The leet-folded slur substring pass stays as defense-in-depth, plus
+// a small exact-token list for terms outside the dataset's scope.
+const obscenityData = englishDataset.build();
+const matcher = new RegExpMatcher({
+  ...obscenityData,
+  whitelistedTerms: [
+    ...(obscenityData.whitelistedTerms || []),
+    "cumming", "cummings",
+  ],
+  ...englishRecommendedTransformers,
+});
+const EXTRA_TOKEN_EXACT = new Set(["hitler", "nazi", "kkk"]);
+// belt for spacing obfuscation ("f u c k") that boundary-aware matching
+// misses: fold leet, strip separators, contains-check the unambiguous set
+const PROF_FOLDED = [
+  "fuck", "shit", "bitch", "whore", "slut", "porn", "penis", "dildo",
 ];
-const PROF_TOKEN_PREFIX = [
-  "cunt", "cock", "rape", "rapist", "faggot", "nigga",
-];
-const PROF_TOKEN_EXACT = new Set([
-  "ass", "cum", "tit", "tits", "dick", "hoe", "hitler", "nazi", "kkk",
-]);
 function leetFold(str) {
   return str.toLowerCase().split("").map((ch) => LEET[ch] || ch).join("");
 }
 function nameAllowed(name) {
+  if (matcher.hasMatch(name)) return false;
   const normAll = leetFold(name).replace(/[^a-z]/g, "");
   if (SLUR_SUBSTR.some((w) => normAll.includes(w))) return false;
-  if (PROF_ANY.some((w) => normAll.includes(w))) return false;
+  if (PROF_FOLDED.some((w) => normAll.includes(w))) return false;
   const tokens = leetFold(name).split(/[^a-z]+/).filter(Boolean);
-  for (const t of tokens) {
-    if (PROF_TOKEN_EXACT.has(t)) return false;
-    if (PROF_TOKEN_PREFIX.some((w) => t.startsWith(w))) return false;
-  }
+  if (tokens.some((t) => EXTRA_TOKEN_EXACT.has(t))) return false;
   return true;
 }
 
