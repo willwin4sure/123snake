@@ -37,6 +37,38 @@ function nameAllowed(name) {
   return true;
 }
 
+// Pacific-time (America/Los_Angeles, DST-aware) period boundaries.
+const TZ = "America/Los_Angeles";
+function laParts(t) {
+  const p = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(t);
+  const [y, m, d] = p.split("-").map(Number);
+  return { y, m, d };
+}
+// UTC timestamp of LA midnight for the given LA calendar date: guess PST
+// (08:00 UTC) then correct by however many hours LA says past midnight.
+function laMidnightUTC(y, m, d) {
+  const t = Date.UTC(y, m - 1, d, 8);
+  const h = +new Intl.DateTimeFormat("en-US", {
+    timeZone: TZ, hour: "numeric", hour12: false,
+  }).format(new Date(t));
+  return t - (h % 24) * 3600_000;
+}
+function laDayStart(now) {
+  const { y, m, d } = laParts(now);
+  return laMidnightUTC(y, m, d);
+}
+function laMonthStart(now) {
+  const { y, m } = laParts(now);
+  return laMidnightUTC(y, m, 1);
+}
+function laDayString(now) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(now);
+}
+
 // IP pseudonymization: HMAC-SHA256 with a server-side salt when the
 // IP_SALT secret is set (wrangler secret put IP_SALT), so stored hashes
 // cannot be reversed by brute-forcing the IPv4 space. Falls back to a
@@ -112,7 +144,7 @@ export default {
       ).bind(Date.now(), clean, fin.score, fin.moves).run();
       const better = await env.DB.prepare(
         "SELECT COUNT(*) AS n FROM scores WHERE score>? AND ts>=?"
-      ).bind(fin.score, Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate())).first();
+      ).bind(fin.score, laDayStart(new Date())).first();
       return json({ ok: 1, score: fin.score, daily_rank: better.n + 1 });
     }
 
@@ -128,11 +160,8 @@ export default {
       const period = url.searchParams.get("p") || "daily";
       const now = new Date();
       let since = 0;
-      if (period === "daily") {
-        since = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-      } else if (period === "monthly") {
-        since = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
-      }
+      if (period === "daily") since = laDayStart(now);
+      else if (period === "monthly") since = laMonthStart(now);
       // every finished game is its own immutable row (arcade style):
       // same-name submissions add entries, they never replace anyone's
       const { results } = await env.DB.prepare(
@@ -143,7 +172,7 @@ export default {
 
     if (p === "/api/hit" && req.method === "POST") {
       const ip = req.headers.get("cf-connecting-ip") || "0";
-      const day = new Date().toISOString().slice(0, 10);
+      const day = laDayString(new Date());
       const iph = await iphash(env, ip + day);
       // per-visitor daily hit cap so the total can't be curl-spammed
       await env.DB.prepare(
