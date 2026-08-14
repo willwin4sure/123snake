@@ -2,6 +2,11 @@ name = "snake-api"
 main = "worker.js"
 compatibility_date = "2026-08-01"
 
+# API on the site's apex zone (already on Cloudflare DNS)
+routes = [
+  { pattern = "api.123snake.com", custom_domain = true },
+]
+
 # The game engine (same wasm the solver lab embeds).
 rules = [
   { type = "CompiledWasm", globs = ["**/*.wasm"] },

@@ -3,7 +3,7 @@
 CREATE TABLE IF NOT EXISTS scores (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts INTEGER NOT NULL,          -- ms since epoch (UTC)
-  ini TEXT NOT NULL,            -- three uppercase letters
+  name TEXT NOT NULL,           -- display name, 2-16 chars, filtered
   score INTEGER NOT NULL,
   moves INTEGER NOT NULL
 );

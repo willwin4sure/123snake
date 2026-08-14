@@ -18,11 +18,24 @@ const json = (obj, status = 200) =>
     headers: { "content-type": "application/json", ...CORS },
   });
 
-// Serious-only blocklist for 3-letter initials (exact matches).
-const BAD_INITIALS = new Set([
-  "FAG", "NIG", "NGR", "KKK", "JEW", "GAS", "FUK", "FUC", "FCK", "CUM",
-  "SEX", "ASS", "DIE", "KYS", "NAZ", "RAP",
+// Display-name filter: hard slurs are substring-matched after leetspeak
+// normalization (these are never innocently embedded); milder terms are
+// whole-string only, to avoid Scunthorpe-style false positives.
+const LEET = { "0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "8": "b", "@": "a", "$": "s", "!": "i" };
+const SLUR_SUBSTR = [
+  "nigg", "niger", "fagg", "kike", "spic", "wetback", "chink", "tranny",
+  "retard", "raghead", "beaner", "gook", "coon",
+];
+const BAD_EXACT = new Set([
+  "hitler", "nazi", "kkk", "rape", "rapist", "cunt", "faggot",
 ]);
+function nameAllowed(name) {
+  const norm = name.toLowerCase().split("").map((ch) => LEET[ch] || ch).join("")
+    .replace(/[^a-z]/g, "");
+  if (SLUR_SUBSTR.some((w) => norm.includes(w))) return false;
+  if (BAD_EXACT.has(norm)) return false;
+  return true;
+}
 
 // IP pseudonymization: HMAC-SHA256 with a server-side salt when the
 // IP_SALT secret is set (wrangler secret put IP_SALT), so stored hashes
@@ -83,19 +96,19 @@ export default {
 
     if (p === "/api/finish" && req.method === "POST") {
       const body = await req.json().catch(() => ({}));
-      const { id, ini } = body;
+      const { id, name } = body;
       if (typeof id !== "string" || !/^[0-9a-f]{32}$/.test(id)) {
         return json({ error: "bad request" }, 400);
       }
-      const clean = String(ini || "").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 3);
-      if (clean.length !== 3) return json({ error: "initials must be 3 letters" }, 400);
-      if (BAD_INITIALS.has(clean)) return json({ error: "pick different initials" }, 400);
+      const clean = String(name || "").replace(/[^\w .-]/g, "").replace(/\s+/g, " ").trim().slice(0, 16);
+      if (clean.length < 2) return json({ error: "name must be 2-16 characters" }, 400);
+      if (!nameAllowed(clean)) return json({ error: "pick a different name" }, 400);
       const stub = env.GAME.get(env.GAME.idFromName(id));
       const r = await stub.fetch("https://do/finish", { method: "POST" });
       if (!r.ok) return json(await r.json(), r.status);
       const fin = await r.json();
       await env.DB.prepare(
-        "INSERT INTO scores(ts, ini, score, moves) VALUES(?,?,?,?)"
+        "INSERT INTO scores(ts, name, score, moves) VALUES(?,?,?,?)"
       ).bind(Date.now(), clean, fin.score, fin.moves).run();
       const better = await env.DB.prepare(
         "SELECT COUNT(*) AS n FROM scores WHERE score>? AND ts>=?"
@@ -113,7 +126,7 @@ export default {
         since = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
       }
       const { results } = await env.DB.prepare(
-        "SELECT ini, score, ts FROM scores WHERE ts>=? ORDER BY score DESC, ts ASC LIMIT 25"
+        "SELECT name, score, ts FROM scores WHERE ts>=? ORDER BY score DESC, ts ASC LIMIT 25"
       ).bind(since).all();
       return json({ rows: results });
     }
