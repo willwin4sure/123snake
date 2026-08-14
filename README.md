@@ -55,7 +55,11 @@ cargo build --release
 Policy specs: `random`, `greedy:<weights>`, `exp:d<depth>:s<samples>:k<topk>:<weights>`
 with weights `score | v1 | v1lin | v2 | v3 | v4 | v5 | v6`.
 
-## Experiment results (500 fresh episodes, move cap 300, seeds 5000+)
+## Experiment results — the heuristic era (500 fresh episodes, move cap 300, seeds 5000+)
+
+*(This section chronicles the hand-crafted-heuristic phase. It was
+superseded by the learned n-tuple networks below, which beat the best
+heuristic champion by ~4x.)*
 
 | policy | mean score | ±se | mean moves | mean max tile |
 |---|---|---|---|---|
@@ -133,46 +137,108 @@ Findings so far:
    avoids merging exactly three 3s (→ 9) in favor of two (→ 6) or four (→ 12).
    Current champion: `exp:d2:s12:k16:v5t4`.
 
+## The n-tuple era
+
+Afterstate TD(0) with temporal-coherence learning rates over
+dihedral-symmetric tuple lookup tables — the
+[2048 lineage](https://arxiv.org/abs/1604.05085) adapted to 5x5 chains,
+with a PENDING symbol so V(afterstate) embeds the refill expectation
+(greedy play is effectively 1.5-ply). The champion stacks positional
+4/5/6-tuples (rows, 2x2, plus, staircases, big-L, 2x3, run-4+2,
+t321 triangles, fish), shared tiny tuples, and value-aware global
+features (top-3 blob/path decompositions) into **1.09B parameters**,
+trained 10M self-play games in ~14h via lock-free hogwild threads.
+
+![champion lineage](assets/champion-lineage.svg)
+
+Selected findings (all verdicts = 30k-game benchmarks, seeds 15000+,
+SEM ~17; run-to-run training variance is ±40-50 — n=1000 benchmarks
+repeatedly gave wrong orderings for <80-point effects):
+
+- **Exact chance-node enumeration** when 3^vacated <= samples (else
+  without-replacement sampling) made depth-2 search +21% stronger AND
+  5.5x faster — sampling noise was costing ~20%.
+- **Best single features**: run42 (4-run + adjacent 2-run) +263,
+  path4 +210, path3 +183, fish +180, blob3 +162, positional-2x3 +101.
+  Value-aware global features win; value-blind ones are null. Combos
+  keep scaling past 5M games; single features plateau.
+- **Exact folding**: absorbed shapes (staircase+bigL -> t321,
+  plus+2x2 -> fish, tiny -> rows/fish) fold orbit-to-orbit into their
+  supersets at inference, |dV| < 1e-4 — 344 images removed for free.
+- **Carousel restart shaping** (snapshot boards at max-tile 192/768,
+  restart 25% of games from snapshots): **+131 over an
+  identical-config rerun — the current champion at 3733**. Late-game
+  states are undertrained by natural play; oversampling them is the
+  only training-method intervention that survived.
+- Negatives, for the record: TC(lambda)=0.5 accelerates early learning
+  but converges to baseline while running 18% slower; shared+positional
+  table stacking is a wash (+6); refill-consistency projection HURTS
+  (-128) because PENDING cells are observables, not unknowns; OTD
+  bonuses, baked optimism, staged promotion, and adaptive-depth search
+  all finished at or below baseline.
+
+![wave 6 deltas](assets/wave6-delta.svg)
+
+## Test-time compute
+
+Depth-2 expectimax over the folded champion, top-k moves x s sampled
+refills per chance node (n=500 paired seeds, full cartesian in
+`results/ttc/`):
+
+| config | mean | ms/move |
+|---|---|---|
+| greedy | 3535 | 0.14 |
+| 4x9 | 4386 | 2.5 |
+| 4x27 | 4812 | 3.0 |
+| **4x48** | **4877** | 3.2 |
+
+Everything wider or deeper is dominated: beams past ~4 re-admit
+noise-inflated moves (winner's curse on sampled chance nodes), and
+depth 3+ pays quadratically for noisier leaves. Beam-of-4 is globally
+optimal on a strong value function.
+
+## Distilling into a CNN (ml/)
+
+`ml/train_q2.py` distills full-width depth-2 teacher search into a
+1.2M-param CNN (14-plane board embedding, 8 residual blocks, factored
+pick-start-then-directions policy + value head, Apple MPS):
+
+- Trie-value targets (every mid-chain state valued at the max over its
+  completions' teacher Q) + deeper policy heads: **value corr 0.96,
+  top-1 move agreement 0.51**.
+- Data scaling works: 10x teacher states (118k -> 1.12M) doubled
+  net-only play from 768 to **1685 mean** — vs the teacher's 3535 and
+  a 5MB weight file against the table's 13GB.
+- **Search amplifies value error** (`results/nn-ttc-puct.md`):
+  value-greedy over the net collapses to 230; root-PUCT at 32 sims
+  gains +15% but 128+ sims inverts and hunts the value head's
+  off-manifold optimism. The fix is coverage (DAgger — machinery
+  built and validated: `--dump-q`, `--label-q`, student-state
+  dumping), not compute.
+
+## Ranked leaderboard (server/)
+
+The deployed game at [123snake.com](https://123snake.com) runs a
+server-authoritative ranked mode: a Cloudflare Durable Object per game
+holds the real board via the same wasm engine the lab embeds, clients
+submit chain paths only, and daily/monthly/all-time boards live in D1
+(Pacific-midnight boundaries, best-effort profanity filtering via
+obscenity + belts, per-score immutable entries). See
+[`server/README.md`](server/README.md) for the API and deploy story.
+
 ## Next steps
 
-- Positional heuristics: penalize *clustered* dead tiles (bad tiles adjacent to bad
-  tiles), corner/edge placement terms.
-- MCTS with progressive widening over chance nodes (should dominate fixed-depth
-  expectimax at equal compute).
-- Self-play data generation for NN training: `run_episode` already emits seeded,
-  reproducible trajectories; add a `--dump` flag writing (state, chosen move,
-  outcome) tuples, then distill search into a policy/value net.
-- ~~Wasm build of `game` + `search` as the web artifact's backend~~ — done: `wasm_api.rs`
-  exposes a bare-ABI `analyze()` (no wasm-bindgen); build with
-  `cargo build --profile wasm-release --target wasm32-unknown-unknown --lib`, then embed
-  the base64 module in `123-snake.html` (solver mode: top chains + EVs, autoplay).
-  A future NN policy/value net slots behind the same `analyze` interface.
-- Full undo/replay: a game is fully described by (seed, move list) since the RNG is
-  seeded — unlimited undo is "replay the prefix". Natural once the engine owns state.
-
-## Neural network (ml/)
-
-Proof-of-concept AlphaZero-style learning, following the 2048 literature
-(afterstate TD / expert iteration lineage):
-
-- `snake dump` emits self-play trajectories as JSONL: board, the teacher's
-  chosen path, remaining score, game id.
-- `ml/train_distill.py` distills the hand policy into a policy+value net.
-  Action space is click-level submoves (first click masked to cells with an
-  equal neighbor, then 5-way direction/finish decisions, no take-backs) — tiny
-  branching, MCTS-ready. Input: 14 planes (log2 value, prime exponents of
-  2/3/5/7, off-residual flag, 1/2/3 one-hots, visited/head/in-path). Shared
-  conv trunk, start + direction + value heads; value target log2(1+remaining);
-  random dihedral symmetrization per batch. Runs on Apple MPS.
-- `ml/play_net.py` plays games with the raw net (greedy submove decode, no
-  search) against the Rust engine.
-
-First results (3000 teacher games of exp:d2:s12:k16:t4, 15 epochs, ~5 min):
-holdout exact full-move agreement 41.3% (chance is a few percent), direction
-accuracy 94%, value correlation 0.72 in log space (linear calibration managed
-0.49), and net-only greedy play scores mean 299 / p90 474 over 200 games —
-3.2x random, ~70% of 1-ply hand-eval greedy, with zero search at inference.
-Next: net as MCTS prior + afterstate value leaf, then expert iteration.
+- DAgger round 1 for the CNN: student rollouts + teacher labels are
+  generated; retrain and re-test PUCT on the robust value head.
+- Unfinished wave-7 arms: hook6/zig6 corner-turn 6-tuples,
+  chain-12-alphabet 7-tuples (corner L44, stair7), hashed corner
+  8-tuple — implemented and seeded, verdicts pending compute.
+- Leaderboard Labs: lookahead refill queue, 1v1 over WebSockets on the
+  game Durable Object (shared stream, per-move clock), merge-value
+  garbage injection.
+- Value calibration of the heuristic-era ideas under the learned V
+  (potential-term negatives may flip with realization-probability
+  discounting).
 
 ## Files and build
 
