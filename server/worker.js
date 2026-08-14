@@ -113,12 +113,28 @@ async function iphash(env, s) {
   return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
 }
 
+const ALLOWED_ORIGINS = new Set([
+  "https://123snake.com",
+  "https://www.123snake.com",
+  "http://localhost:8290",
+  "http://localhost:8080",
+]);
+
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
     const p = url.pathname;
     if (req.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: CORS });
+    }
+    // browsers always send Origin on cross-site POSTs: block drive-by
+    // conscription of visitors' browsers by third-party pages. Bare
+    // clients (no Origin) remain subject to the per-IP caps.
+    if (req.method === "POST") {
+      const origin = req.headers.get("origin");
+      if (origin && !ALLOWED_ORIGINS.has(origin)) {
+        return json({ error: "origin not allowed" }, 403);
+      }
     }
 
     if (p === "/api/new" && req.method === "POST") {
@@ -266,6 +282,13 @@ export class GameSession {
 
   async persist() {
     const dump = this.readResult(this.ex.game_dump());
+    // anti-cheat: mulberry32 has 32-bit state, so the whole refill
+    // stream is brute-forceable from observed boards. Re-randomize the
+    // stored state after every move: refills stay i.i.d. uniform, but
+    // past observations can never predict future draws.
+    const r = new Uint32Array(1);
+    crypto.getRandomValues(r);
+    dump.rng = r[0];
     await this.state.storage.put("g", dump);
     await this.state.storage.setAlarm(Date.now() + 3600_000);
     return dump;
