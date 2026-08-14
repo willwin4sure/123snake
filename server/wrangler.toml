@@ -1,6 +1,7 @@
 name = "snake-api"
 main = "worker.js"
 compatibility_date = "2026-08-01"
+workers_dev = false
 
 # API on the site's apex zone (already on Cloudflare DNS)
 routes = [
@@ -9,7 +10,7 @@ routes = [
 
 # The game engine (same wasm the solver lab embeds).
 rules = [
-  { type = "CompiledWasm", globs = ["**/*.wasm"] },
+  { type = "CompiledWasm", globs = ["**/*.wasm"], fallthrough = false },
 ]
 
 [[durable_objects.bindings]]
@@ -26,4 +27,4 @@ new_sqlite_classes = ["GameSession"]
 [[d1_databases]]
 binding = "DB"
 database_name = "snake-scores"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "fc6f1a64-41c7-47a0-be6d-f06ee387c01f"
