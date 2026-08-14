@@ -24,9 +24,22 @@ const BAD_INITIALS = new Set([
   "SEX", "ASS", "DIE", "KYS", "NAZ", "RAP",
 ]);
 
-async function sha1hex(s) {
-  const d = await crypto.subtle.digest("SHA-1", new TextEncoder().encode(s));
-  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
+// IP pseudonymization: HMAC-SHA256 with a server-side salt when the
+// IP_SALT secret is set (wrangler secret put IP_SALT), so stored hashes
+// cannot be reversed by brute-forcing the IPv4 space. Falls back to a
+// plain digest in local dev.
+async function iphash(env, s) {
+  const enc = new TextEncoder();
+  if (env.IP_SALT) {
+    const key = await crypto.subtle.importKey(
+      "raw", enc.encode(env.IP_SALT), { name: "HMAC", hash: "SHA-256" },
+      false, ["sign"]
+    );
+    const d = await crypto.subtle.sign("HMAC", key, enc.encode(s));
+    return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
+  }
+  const d = await crypto.subtle.digest("SHA-256", enc.encode(s));
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
 }
 
 export default {
@@ -39,7 +52,7 @@ export default {
 
     if (p === "/api/new" && req.method === "POST") {
       const ip = req.headers.get("cf-connecting-ip") || "0";
-      const iph = (await sha1hex(ip)).slice(0, 16);
+      const iph = await iphash(env, ip);
       const hourAgo = Date.now() - 3600_000;
       const row = await env.DB.prepare(
         "SELECT COUNT(*) AS cnt FROM newlog WHERE iph=? AND ts>?"
@@ -108,12 +121,19 @@ export default {
     if (p === "/api/hit" && req.method === "POST") {
       const ip = req.headers.get("cf-connecting-ip") || "0";
       const day = new Date().toISOString().slice(0, 10);
-      const iph = (await sha1hex(ip + day)).slice(0, 16);
-      await env.DB.prepare("INSERT OR IGNORE INTO hits(day, iph) VALUES(?,?)")
-        .bind(day, iph).run();
+      const iph = await iphash(env, ip + day);
+      // per-visitor daily hit cap so the total can't be curl-spammed
       await env.DB.prepare(
-        "INSERT INTO meta(k, v) VALUES('total', 1) ON CONFLICT(k) DO UPDATE SET v=v+1"
-      ).run();
+        "INSERT INTO hits(day, iph, n) VALUES(?,?,1) ON CONFLICT(day, iph) DO UPDATE SET n=n+1"
+      ).bind(day, iph).run();
+      const mine = await env.DB.prepare(
+        "SELECT n FROM hits WHERE day=? AND iph=?"
+      ).bind(day, iph).first();
+      if (mine.n <= 100) {
+        await env.DB.prepare(
+          "INSERT INTO meta(k, v) VALUES('total', 1) ON CONFLICT(k) DO UPDATE SET v=v+1"
+        ).run();
+      }
       const total = await env.DB.prepare("SELECT v FROM meta WHERE k='total'").first();
       const uniq = await env.DB.prepare(
         "SELECT COUNT(*) AS u FROM hits WHERE day=?"

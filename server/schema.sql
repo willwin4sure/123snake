@@ -20,6 +20,7 @@ CREATE INDEX IF NOT EXISTS newlog_iph_ts ON newlog(iph, ts);
 CREATE TABLE IF NOT EXISTS hits (
   day TEXT NOT NULL,
   iph TEXT NOT NULL,
+  n INTEGER NOT NULL DEFAULT 1,   -- hits from this visitor today (spam cap)
   PRIMARY KEY (day, iph)
 );
 CREATE TABLE IF NOT EXISTS meta (
