@@ -41,9 +41,11 @@
   .modes button{padding:8px 24px;font-weight:800;opacity:.6;}
   .modes button.on{opacity:1;border:2.5px solid var(--ink);
     padding:7px 22.5px;}
-  .lbpanel{margin-top:18px;border-radius:14px;
+  .lbpanel{margin-top:18px;border-radius:14px;--acc:hsl(112,55%,70%);
     padding:12px 14px;background:var(--well);border:1px solid var(--line);
-    display:none;}
+    border-top:4px solid var(--acc);display:none;}
+  .lbpanel[data-p="monthly"]{--acc:hsl(48,88%,66%);}
+  .lbpanel[data-p="alltime"]{--acc:hsl(27,88%,66%);}
   .wrap.ranked-ui .lbpanel{display:block;}
   .lbpanel h3{margin:0 0 8px;font-size:14px;letter-spacing:.06em;
     text-transform:uppercase;opacity:.7;}
@@ -51,14 +53,22 @@
   .lbtabs button{flex:1;padding:3px 0;font-size:12px;font-weight:700;
     border-radius:8px;border:1px solid transparent;background:transparent;
     cursor:pointer;font-family:inherit;color:inherit;opacity:.55;}
-  .lbtabs button.on{opacity:1;border-color:currentColor;}
+  .lbtabs button.on{opacity:1;border-color:var(--acc);
+    background:var(--acc);color:rgba(30,34,28,.88);}
   #lbrows{list-style:none;margin:0;padding:0;font-variant-numeric:tabular-nums;
     font-size:13.5px;min-height:120px;}
   #lbrows li{display:flex;justify-content:space-between;gap:8px;padding:3px 2px;
     font-weight:700;border-bottom:1px solid var(--line);}
   #lbrows li span:first-child{overflow:hidden;text-overflow:ellipsis;
     white-space:nowrap;min-width:0;}
-  #lbrows li span:first-child em{font-style:normal;opacity:.5;margin-right:5px;}
+  #lbrows li span:first-child em{font-style:normal;opacity:.5;margin-right:6px;
+    display:inline-flex;width:21px;height:21px;align-items:center;
+    justify-content:center;flex:none;}
+  #lbrows li.m1 em,#lbrows li.m2 em,#lbrows li.m3 em{opacity:1;
+    border-radius:50%;color:rgba(30,34,28,.85);font-size:12px;}
+  #lbrows li.m1 em{background:hsl(45,85%,60%);}
+  #lbrows li.m2 em{background:hsl(210,14%,76%);}
+  #lbrows li.m3 em{background:hsl(25,60%,62%);}
   #lbrows li.me{outline:2px solid currentColor;border-radius:6px;padding:3px 6px;}
   #lbfoot{font-size:11.5px;opacity:.6;margin:10px 0 0;}
   #ini{width:11em;text-align:center;font:inherit;font-weight:800;padding:6px;
@@ -185,7 +195,7 @@
     <p id="lbfoot"></p>
   </aside>
   <p class="foot">A recreation of 123 Snake (Integer Snake), made with <a href="https://claude.com/claude-code" style="color:inherit">Claude Fable 5</a>.
-    <a class="gh" href="https://github.com/willwin4sure/123snake" aria-label="Star the source on GitHub"><svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg> source</a></p>
+    <span id="visitsfoot"></span><a class="gh" href="https://github.com/willwin4sure/123snake" aria-label="Star the source on GitHub"><svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg> source</a></p>
 </div>
 <script>
 (function(){
@@ -514,10 +524,12 @@
   }
 
   function renderVisits(){
-    if(visits) lbFoot.textContent=visits.total+' visits \u00B7 '+visits.today_unique+' today';
+    if(visits) document.getElementById('visitsfoot').textContent=
+      visits.total+' visits \u00B7 '+visits.today_unique+' today \u00B7 ';
   }
   function openLB(period){
     curPeriod=period;
+    lbEl.dataset.p=period;
     var tabs=lbEl.querySelectorAll('.lbtabs button');
     tabs.forEach(function(b){b.classList.toggle('on',b.dataset.p===period)});
     api('/api/board?p='+period).then(function(b){
@@ -530,7 +542,10 @@
       }
       b.rows.forEach(function(row,i){
         var li=document.createElement('li');
-        if(mine&&row.name.toLowerCase()===mine)li.className='me';
+        var cls=[];
+        if(i<3)cls.push('m'+(i+1));
+        if(mine&&row.name.toLowerCase()===mine)cls.push('me');
+        li.className=cls.join(' ');
         var l=document.createElement('span');
         var em=document.createElement('em');
         em.textContent=(i+1)+'.';
@@ -541,6 +556,7 @@
         li.appendChild(l);li.appendChild(r);
         lbRows.appendChild(li);
       });
+      lbFoot.textContent='';
       renderVisits();
     }).catch(function(err){
       lbFoot.textContent=err.message;
