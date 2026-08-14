@@ -77,6 +77,7 @@ fn cmd_membench() {
     let mut acc2 = 0.0f64;
     for ch in idx.chunks(16) {
         for &i in ch {
+            #[cfg(target_arch = "aarch64")]
             unsafe {
                 std::arch::asm!("prfm pldl1keep, [{0}]", in(reg) w.as_ptr().add(i));
             }
@@ -185,6 +186,7 @@ fn cmd_membench() {
     for ch in idx.chunks(31).take(OPS / 31) {
         let rd = &ch[..ch.len().saturating_sub(1)];
         for &i in rd {
+            #[cfg(target_arch = "aarch64")]
             unsafe {
                 std::arch::asm!("prfm pldl1keep, [{0}]", in(reg) wm.as_ptr().add(i));
             }
