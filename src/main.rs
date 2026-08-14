@@ -15,6 +15,19 @@ fn arg_val(args: &[String], key: &str) -> Option<String> {
         .and_then(|i| args.get(i + 1).cloned())
 }
 
+/// aarch64 prefetch hint for the membench read patterns; no-op elsewhere
+/// (prfm is ARM-only and the bench concluded prefetch doesn't pay anyway).
+#[inline]
+#[allow(unused_variables)]
+fn prefetch_f32(w: &[f32], idx: &[usize]) {
+    #[cfg(target_arch = "aarch64")]
+    for &i in idx {
+        unsafe {
+            std::arch::asm!("prfm pldl1keep, [{0}]", in(reg) w.as_ptr().add(i));
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cmd = args.first().map(String::as_str).unwrap_or("eval");
@@ -76,12 +89,7 @@ fn cmd_membench() {
     let t0 = Instant::now();
     let mut acc2 = 0.0f64;
     for ch in idx.chunks(16) {
-        for &i in ch {
-            #[cfg(target_arch = "aarch64")]
-            unsafe {
-                std::arch::asm!("prfm pldl1keep, [{0}]", in(reg) w.as_ptr().add(i));
-            }
-        }
+        prefetch_f32(&w, ch);
         for &i in ch {
             acc2 += w[i] as f64;
         }
@@ -185,12 +193,7 @@ fn cmd_membench() {
     let mut k7 = 0;
     for ch in idx.chunks(31).take(OPS / 31) {
         let rd = &ch[..ch.len().saturating_sub(1)];
-        for &i in rd {
-            #[cfg(target_arch = "aarch64")]
-            unsafe {
-                std::arch::asm!("prfm pldl1keep, [{0}]", in(reg) wm.as_ptr().add(i));
-            }
-        }
+        prefetch_f32(&wm, rd);
         for &i in rd {
             acc7 += wm[i] as f64;
         }
