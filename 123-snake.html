@@ -342,12 +342,14 @@
     for(r=0;r<N;r++){out.push([]);for(c=0;c<N;c++)out[r].push(flat[r*N+c]);}
     return out;
   }
-  function localGame(){
+  var offlineReason='';
+  function localGame(reason){
     ranked=false; offline=true; rankedId=null;
+    offlineReason=reason||'Offline game \u2014 score won\u2019t submit';
     score=0; overEl.hidden=true;
     rngState=rndSeed();
     build(freshVals()); hud(); refresh();
-    shareFeedback('Offline \u2014 scores won\u2019t submit');
+    shareFeedback(offlineReason+' \u2014 New game retries ranked');
   }
   function startFrom(g){
     ranked=true; offline=false;
@@ -362,8 +364,11 @@
     localStorage.removeItem(KG);
     api('/api/new',{}).then(function(g){
       startFrom(g);
-    }).catch(function(){
-      lock=false; localGame();
+    }).catch(function(err){
+      lock=false;
+      localGame(/rate limited/.test(err.message)
+        ?'Too many games from your network right now'
+        :'Can\u2019t reach the server');
     });
   }
   function resumeOrNew(){
@@ -444,37 +449,35 @@
     build(to2d(st.cells)); hud(); refresh();
     if(st.over) gameOver();
   }
+  function moveError(err){
+    if(err.state&&err.state.moves!==undefined){
+      lock=false; path=[];
+      resyncFrom(err.state);
+      return;
+    }
+    if(/no such game/.test(err.message)){
+      lock=false; path=[]; refresh();
+      shareFeedback('Session expired \u2014 dealing a new game');
+      newGame();
+      return;
+    }
+    api('/api/state?id='+rankedId).then(function(st){
+      lock=false; path=[];
+      resyncFrom(st);
+    }).catch(function(){
+      lock=false; path=[]; refresh();
+      shareFeedback('Connection lost \u2014 move not made, try again');
+    });
+  }
   function commitPath(){
     if(!ranked){doMerge(null);return;}
     var idxs=path.map(function(t){return t.r*N+t.c});
-    lock=true;
-    api('/api/move',{id:rankedId,path:idxs,n:moveN}).then(function(r){
-      moveN=r.moves;
-      lock=false; doMerge(r);
-    }).catch(function(err){
-      if(err.state&&err.state.moves!==undefined){
-        lock=false; path=[];
-        resyncFrom(err.state);
-        return;
-      }
-      if(/no such game/.test(err.message)){
-        lock=false; path=[]; refresh();
-        shareFeedback('Session expired \u2014 dealing a new game');
-        newGame();
-        return;
-      }
-      // network hiccup: ask the server what actually happened
-      api('/api/state?id='+rankedId).then(function(st){
-        lock=false; path=[];
-        resyncFrom(st);
-      }).catch(function(){
-        lock=false; path=[]; refresh();
-        shareFeedback('Connection lost \u2014 move not made, try again');
-      });
-    });
+    // optimistic: the merge itself is deterministic, only refill values
+    // are server-known — animate now, fill refills when the reply lands
+    doMerge(api('/api/move',{id:rankedId,path:idxs,n:moveN}));
   }
 
-  function doMerge(server){
+  function doMerge(serverP){
     lock=true; hud();
     var head=path[path.length-1];
     var sum=path[0].v*path.length;
@@ -492,17 +495,25 @@
       setV(head,sum);
       head.el.classList.add('pop');
       setTimeout(function(){head.el.classList.remove('pop')},260);
-      score=server?server.score:score+sum; hud();
+      score=score+sum; hud();
       floatScore(sum,head);
-      cells.forEach(function(rc,i){
-        var v=server?server.cells[rc[0]*N+rc[1]]:rnd13();
-        setTimeout(function(){makeTile(rc[0],rc[1],v,true)},60+i*35);
-      });
-      setTimeout(function(){
-        lock=false; hud(); refresh();
-        var over=server?server.over===1:!movesAvail(values());
-        if(over) gameOver();
-      },cells.length*35+300);
+      var settle=function(server){
+        if(server){score=server.score;moveN=server.moves;hud();}
+        cells.forEach(function(rc,i){
+          var v=server?server.cells[rc[0]*N+rc[1]]:rnd13();
+          setTimeout(function(){makeTile(rc[0],rc[1],v,true)},60+i*35);
+        });
+        setTimeout(function(){
+          lock=false; hud(); refresh();
+          var over=server?server.over===1:!movesAvail(values());
+          if(over) gameOver();
+        },cells.length*35+300);
+      };
+      if(serverP){
+        serverP.then(settle,function(err){moveError(err);});
+      }else{
+        settle(null);
+      }
     },175);
   }
   function floatScore(n,t){
@@ -515,9 +526,12 @@
   function gameOver(){
     finalEl.textContent='Final score: '+score;
     submitRow.hidden=!ranked||!rankedId;
-    submitMsg.hidden=true;
     if(ranked&&rankedId){
+      submitMsg.hidden=true;
       iniEl.value=localStorage.getItem(KI)||'';
+    }else{
+      submitMsg.textContent=offlineReason+' \u2014 press New game to retry ranked';
+      submitMsg.hidden=false;
     }
     overEl.hidden=false;
     sOver();

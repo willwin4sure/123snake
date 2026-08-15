@@ -116,6 +116,10 @@ async function iphash(env, s) {
 const ALLOWED_ORIGINS = new Set([
   "https://123snake.com",
   "https://www.123snake.com",
+  // until GitHub finishes issuing the apex cert, the site is reachable
+  // over plain http; these come out once Enforce HTTPS is on
+  "http://123snake.com",
+  "http://www.123snake.com",
   "http://localhost:8290",
   "http://localhost:8080",
 ]);
@@ -144,7 +148,7 @@ export default {
       const row = await env.DB.prepare(
         "SELECT COUNT(*) AS cnt FROM newlog WHERE iph=? AND ts>?"
       ).bind(iph, hourAgo).first();
-      if (row.cnt >= 60) return json({ error: "rate limited" }, 429);
+      if (row.cnt >= 300) return json({ error: "rate limited" }, 429);
       await env.DB.prepare("INSERT INTO newlog(ts, iph) VALUES(?,?)")
         .bind(Date.now(), iph).run();
       const id = crypto.randomUUID().replaceAll("-", "");
