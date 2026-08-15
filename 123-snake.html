@@ -311,10 +311,31 @@
     for(r=0;r<N;r++){out.push([]);for(c=0;c<N;c++)out[r].push(grid[r][c]?grid[r][c].v:0);}
     return out;
   }
-  function build(vals){
+  function build(vals,cascade){
     board.querySelectorAll('.tile,.fl').forEach(function(e){e.remove()});
     grid=[]; path=[];
-    for(var r=0;r<N;r++){grid.push([]);for(var c=0;c<N;c++){grid[r].push(null);makeTile(r,c,vals[r][c]);}}
+    var maxD=0;
+    for(var r=0;r<N;r++){
+      grid.push([]);
+      for(var c=0;c<N;c++){
+        grid[r].push(null);
+        if(cascade){
+          var d=(r+c)*26+Math.random()*18;
+          maxD=Math.max(maxD,d);
+          (function(r,c,v,d){
+            setTimeout(function(){if(grid&&grid[r]&&!grid[r][c])makeTile(r,c,v,true)},d);
+          })(r,c,vals[r][c],d);
+        }else{
+          makeTile(r,c,vals[r][c]);
+        }
+      }
+    }
+    return cascade?maxD+240:0;
+  }
+  function clearBoard(){
+    board.querySelectorAll('.tile,.fl').forEach(function(e){e.remove()});
+    grid=[]; path=[];
+    for(var r=0;r<N;r++){grid.push([]);for(var c=0;c<N;c++)grid[r].push(null);}
   }
   function freshVals(){
     var vals;
@@ -348,7 +369,10 @@
     offlineReason=reason||'Offline game \u2014 score won\u2019t submit';
     score=0; overEl.hidden=true;
     rngState=rndSeed();
-    build(freshVals()); hud(); refresh();
+    lock=true;
+    var dur=build(freshVals(),true);
+    hud(); refresh();
+    setTimeout(function(){lock=false; refresh();},dur);
     shareFeedback(offlineReason+' \u2014 New game retries ranked');
   }
   function startFrom(g){
@@ -356,11 +380,13 @@
     rankedId=g.id; moveN=g.moves||0; score=g.score||0;
     localStorage.setItem(KG,g.id);
     overEl.hidden=true;
-    build(to2d(g.cells)); lock=false; hud(); refresh();
-    if(g.over) gameOver();
+    var dur=build(to2d(g.cells),true);
+    hud(); refresh();
+    setTimeout(function(){lock=false; refresh(); if(g.over) gameOver();},dur);
   }
   function newGame(){
     lock=true; overEl.hidden=true;
+    clearBoard();
     localStorage.removeItem(KG);
     api('/api/new',{}).then(function(g){
       startFrom(g);
