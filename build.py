@@ -155,7 +155,7 @@ def build_og_image() -> None:
     d.text((tx, 190), "123 Snake", font=font(86), fill=(234, 239, 230))
     d.text(
         (tx, 310),
-        "Merge the chains.",
+        "Merge chains.",
         font=font(38),
         fill=(147, 157, 141),
     )

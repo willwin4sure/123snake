@@ -8,5 +8,5 @@ ml/*.bin
 ml/data/
 ml/logs/
 server/node_modules/
-server/.wrangler/
+.wrangler/
 backups/
