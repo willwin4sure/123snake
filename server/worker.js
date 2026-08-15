@@ -116,10 +116,6 @@ async function iphash(env, s) {
 const ALLOWED_ORIGINS = new Set([
   "https://123snake.com",
   "https://www.123snake.com",
-  // until GitHub finishes issuing the apex cert, the site is reachable
-  // over plain http; these come out once Enforce HTTPS is on
-  "http://123snake.com",
-  "http://www.123snake.com",
   "http://localhost:8290",
   "http://localhost:8080",
 ]);
