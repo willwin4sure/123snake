@@ -290,7 +290,9 @@ export class GameSession {
     crypto.getRandomValues(r);
     dump.rng = r[0];
     await this.state.storage.put("g", dump);
-    await this.state.storage.setAlarm(Date.now() + 3600_000);
+    // keep idle games for 24h so a dropped connection (or a closed
+    // laptop) can resume the same ranked game the next day
+    await this.state.storage.setAlarm(Date.now() + 24 * 3600_000);
     return dump;
   }
 
