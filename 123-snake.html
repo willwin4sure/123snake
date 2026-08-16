@@ -27,7 +27,17 @@
   .lbpanel[data-p="alltime"]{--acc:hsl(27,88%,66%);}
   .lbpanel h3{margin:0 0 9px;font-size:14px;letter-spacing:.06em;
     text-transform:uppercase;opacity:.7;padding-bottom:8px;
-    border-bottom:2px solid color-mix(in srgb, var(--ink) 22%, transparent);}
+    border-bottom:2px solid color-mix(in srgb, var(--ink) 22%, transparent);
+    display:flex;align-items:center;justify-content:space-between;}
+  .conn{display:inline-flex;align-items:center;gap:6px;font-size:10.5px;
+    font-weight:700;letter-spacing:.08em;}
+  .conn i{width:8px;height:8px;border-radius:50%;flex:none;
+    background:color-mix(in srgb, var(--ink) 32%, transparent);}
+  .conn.on i{background:hsl(112,72%,48%);
+    box-shadow:0 0 5px 1.5px hsl(112,78%,52%,.8);
+    animation:cglow 2.4s ease-in-out infinite;}
+  @keyframes cglow{50%{box-shadow:0 0 9px 3px hsl(112,78%,52%,.4)}}
+  @media (prefers-reduced-motion:reduce){.conn.on i{animation:none}}
   .lbtabs{display:flex;gap:4px;margin:0 0 8px;padding-bottom:9px;
     border-bottom:2px solid color-mix(in srgb, var(--ink) 22%, transparent);}
   .lbtabs button{flex:1;padding:3px 0;font-size:12px;font-weight:700;
@@ -176,7 +186,7 @@
     <button id="mute">Sound: on</button>
   </div>
   <aside class="lbpanel" id="lb">
-    <h3>Leaderboard</h3>
+    <h3>Leaderboard<span class="conn" id="conn"><i></i><span id="connlbl">Offline</span></span></h3>
     <div class="lbtabs">
       <button data-p="daily" class="on">Today</button>
       <button data-p="monthly">Month</button>
@@ -364,8 +374,13 @@
     return out;
   }
   var offlineReason='';
+  function setConn(on){
+    document.getElementById('conn').classList.toggle('on',!!on);
+    document.getElementById('connlbl').textContent=on?'Ranked':'Offline';
+  }
   function localGame(reason){
     ranked=false; offline=true; rankedId=null;
+    setConn(false);
     offlineReason=reason||'Offline game \u2014 score won\u2019t submit';
     score=0; overEl.hidden=true;
     rngState=rndSeed();
@@ -377,6 +392,7 @@
   }
   function startFrom(g){
     ranked=true; offline=false;
+    setConn(true);
     rankedId=g.id; moveN=g.moves||0; score=g.score||0;
     localStorage.setItem(KG,g.id);
     overEl.hidden=true;
@@ -492,6 +508,7 @@
       resyncFrom(st);
     }).catch(function(){
       lock=false; path=[]; refresh();
+      setConn(false);
       shareFeedback('Connection lost \u2014 move not made, try again');
     });
   }
@@ -524,7 +541,7 @@
       score=score+sum; hud();
       floatScore(sum,head);
       var settle=function(server){
-        if(server){score=server.score;moveN=server.moves;hud();}
+        if(server){score=server.score;moveN=server.moves;hud();setConn(true);}
         cells.forEach(function(rc,i){
           var v=server?server.cells[rc[0]*N+rc[1]]:rnd13();
           setTimeout(function(){makeTile(rc[0],rc[1],v,true)},60+i*35);
@@ -630,8 +647,8 @@
       });
       lbFoot.textContent='';
       renderVisits();
-    }).catch(function(err){
-      lbFoot.textContent=err.message;
+    }).catch(function(){
+      lbFoot.textContent='Can’t reach the leaderboard right now';
     });
   }
   var AC=null, soundOn=localStorage.getItem(KS)!=='off';
