@@ -116,6 +116,8 @@ async function iphash(env, s) {
 const ALLOWED_ORIGINS = new Set([
   "https://123snake.com",
   "https://www.123snake.com",
+  // iOS app: WKWebView serves the bundled page from this custom scheme
+  "app://123snake",
   "http://localhost:8290",
   "http://localhost:8080",
 ]);

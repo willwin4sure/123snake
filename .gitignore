@@ -10,3 +10,4 @@ ml/logs/
 server/node_modules/
 .wrangler/
 backups/
+ios/build/
